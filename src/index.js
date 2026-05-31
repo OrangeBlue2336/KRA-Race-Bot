@@ -1,5 +1,7 @@
 const {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   Client,
   EmbedBuilder,
   GatewayIntentBits,
@@ -25,12 +27,14 @@ const {
   validateHorseCount,
 } = require('./utils/betting');
 const {
+  KST_ZONE,
   formatRaceDate,
   formatRaceTime,
   isPastTicketClose,
   normalizeRaceTime,
   todayKST,
 } = require('./utils/time');
+const dayjs = require('dayjs');
 
 const CUSTOM_IDS = {
   meetSelect: 'ticket:meet',
@@ -39,14 +43,31 @@ const CUSTOM_IDS = {
   horsesInput: 'ticket:horses',
   amountInput: 'ticket:amount',
   modalPrefix: 'ticket:modal:',
+  schedulePrevPrefix: 'schedule:prev:',
+  scheduleNextPrefix: 'schedule:next:',
 };
 
 const scheduleCache = new Map();
 
 function getCommandData() {
-  return new SlashCommandBuilder()
-    .setName('마권발매')
-    .setDescription('실제 경마 결과와 연동되는 가상 마권을 발매합니다.');
+  return [
+    new SlashCommandBuilder()
+      .setName('마권발매')
+      .setDescription('실제 경마 결과와 연동되는 가상 마권을 발매합니다.'),
+    new SlashCommandBuilder()
+      .setName('내마권')
+      .setDescription('지금까지 발매한 내 가상 마권 내역을 확인합니다.'),
+    new SlashCommandBuilder()
+      .setName('경마일정')
+      .setDescription('오늘부터 1주일 동안의 경마 일정을 확인합니다.')
+      .addStringOption((option) => option
+        .setName('경마장')
+        .setDescription('일정을 확인할 경마장을 선택합니다.')
+        .setRequired(true)
+        .addChoices(
+          ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
+        )),
+  ];
 }
 
 function cacheKey(meetCode, rcDate = todayKST()) {
@@ -60,18 +81,144 @@ function getCachedSchedule(meetCode, rcDate = todayKST()) {
   return cached.races;
 }
 
-async function loadSchedule(meet) {
-  const rcDate = todayKST();
+async function loadSchedule(meet, rcDate = todayKST()) {
   const races = await kraApi.getRaceSchedule(meet.apiMeet, rcDate);
   scheduleCache.set(cacheKey(meet.code, rcDate), {
     races,
-    expiresAt: Date.now() + 60_000,
+    expiresAt: Date.now() + 5 * 60_000,
   });
   return races;
 }
 
 async function warmScheduleCache() {
   await Promise.allSettled(config.MEETS.map(loadSchedule));
+}
+
+function weekDatesFromToday() {
+  const start = dayjs().tz(KST_ZONE);
+  return Array.from({ length: 7 }, (_, index) => start.add(index, 'day').format('YYYYMMDD'));
+}
+
+async function loadDaySchedule(meet, rcDate) {
+  const cached = getCachedSchedule(meet.code, rcDate);
+  const races = cached || await loadSchedule(meet, rcDate);
+
+  return races
+    .filter((race) => String(race.rcDate) === rcDate)
+    .map((race) => ({
+      ...race,
+      meetCode: meet.code,
+      meetName: meet.name,
+    }))
+    .sort((a, b) => {
+      const timeDiff = Number(normalizeRaceTime(a.schStTime)) - Number(normalizeRaceTime(b.schStTime));
+      if (timeDiff !== 0) return timeDiff;
+      return Number(a.rcNo) - Number(b.rcNo);
+    });
+}
+
+async function loadWeekSchedule(meetCode) {
+  const meet = config.MEET_BY_CODE[meetCode];
+  const dates = weekDatesFromToday();
+  const days = [];
+  for (const rcDate of dates) {
+    days.push({
+      rcDate,
+      races: await loadDaySchedule(meet, rcDate),
+    });
+  }
+  return days;
+}
+
+function firstScheduleIndex(days) {
+  const todayIndex = 0;
+  if (days[todayIndex]?.races.length > 0) return todayIndex;
+  const nearest = days.findIndex((day) => day.races.length > 0);
+  return nearest === -1 ? todayIndex : nearest;
+}
+
+function ticketStatusText(ticket) {
+  if (ticket.status === 'pending' || ticket.status === 'checking') return '확인중';
+  if (ticket.status === 'won') return `적중 / 배당률 ${ticket.odds || 0} / 환급 ${Number(ticket.payout || 0).toLocaleString()}원`;
+  if (ticket.status === 'lost') return `실패 / ${Number(ticket.amount || 0).toLocaleString()}원을 잃었습니다`;
+  if (ticket.status === 'void') return '무효';
+  return ticket.status;
+}
+
+function formatTicketLine(ticket, index) {
+  const horses = ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`;
+  const result = ticket.resultTop3?.length
+    ? `\n결과: ${ticket.resultTop3.map((r) => `${r.ord}착 ${r.chulNo}번 ${r.hrName || ''}`.trim()).join(' / ')}`
+    : '';
+  return [
+    `**${index}. ${ticket.meet} ${ticket.rcNo}R** (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`,
+    `${ticket.betType} / ${horses} / ${Number(ticket.amount).toLocaleString()}원`,
+    `상태: ${ticketStatusText(ticket)}${result}`,
+  ].join('\n');
+}
+
+function buildMyTicketsEmbeds(tickets) {
+  if (tickets.length === 0) {
+    return [
+      new EmbedBuilder()
+      .setColor(0x95a5a6)
+      .setTitle('내 마권')
+      .setDescription('아직 발매한 마권이 없습니다.')
+      .setFooter({ text: '결과가 확정된 마권은 DB 용량 절약을 위해 30일 뒤 자동 삭제됩니다.' }),
+    ];
+  }
+
+  const chunks = [];
+  for (let index = 0; index < tickets.length; index += 8) {
+    chunks.push(tickets.slice(index, index + 8));
+  }
+
+  return chunks.map((chunk, chunkIndex) => (
+    new EmbedBuilder()
+      .setColor(0x3d8af7)
+      .setTitle(chunkIndex === 0 ? '내 마권' : `내 마권 ${chunkIndex + 1}`)
+      .setDescription(chunk.map((ticket, index) => formatTicketLine(ticket, chunkIndex * 8 + index + 1)).join('\n\n'))
+      .setFooter({
+        text: `총 ${tickets.length}장 · 결과 확정 마권은 30일 뒤 자동 삭제됩니다.`,
+      })
+  ));
+}
+
+function buildScheduleMessage(days, index, meetCode) {
+  const safeIndex = Math.max(0, Math.min(index, days.length - 1));
+  const day = days[safeIndex];
+  const meet = config.MEET_BY_CODE[meetCode];
+  const isToday = safeIndex === 0;
+  const lines = day.races.length
+    ? day.races.map((race) => {
+      const closed = isPastTicketClose(day.rcDate, race.schStTime, config.ticketCloseBeforeStartMinutes);
+      return `${race.rcNo}R ${formatRaceTime(race.schStTime)} / ${race.rank || race.rcName || '경주'} / ${race.rcDist || '-'}m${closed && isToday ? ' / 발매마감' : ''}`;
+    })
+    : ['이 날짜에는 조회된 경주가 없습니다.'];
+
+  const embed = new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle(`경마 일정 - ${meet.name} · ${formatRaceDate(day.rcDate)}${isToday ? ' (오늘)' : ''}`)
+    .setDescription(lines.join('\n').slice(0, 4000))
+    .setFooter({ text: `오늘부터 1주일 범위 · ${safeIndex + 1}/7` });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${CUSTOM_IDS.schedulePrevPrefix}${meetCode}:${safeIndex}`)
+      .setLabel('이전')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(safeIndex === 0),
+    new ButtonBuilder()
+      .setCustomId(`${CUSTOM_IDS.scheduleNextPrefix}${meetCode}:${safeIndex}`)
+      .setLabel('다음')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(safeIndex === days.length - 1),
+  );
+
+  return {
+    embeds: [embed],
+    components: [row],
+  };
 }
 
 function availableRacesFor(meetCode) {
@@ -189,6 +336,57 @@ async function handleTicketCommand(interaction) {
     content: '**마권 발매**\n베팅할 경마장을 선택하세요.',
     components: [createMeetSelectRow()],
   });
+}
+
+async function handleMyTicketsCommand(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const tickets = await Ticket.find({ discordId: interaction.user.id })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const embeds = buildMyTicketsEmbeds(tickets);
+  await interaction.editReply({ embeds: embeds.slice(0, 10) });
+
+  for (let index = 10; index < embeds.length; index += 10) {
+    await interaction.followUp({
+      embeds: embeds.slice(index, index + 10),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+
+async function handleScheduleCommand(interaction) {
+  await interaction.deferReply();
+
+  const meetCode = interaction.options.getString('경마장', true);
+  const meet = config.MEET_BY_CODE[meetCode];
+  if (!meet) {
+    await interaction.editReply('알 수 없는 경마장입니다.');
+    return;
+  }
+
+  const days = await loadWeekSchedule(meetCode);
+  const index = firstScheduleIndex(days);
+  await interaction.editReply(buildScheduleMessage(days, index, meetCode));
+}
+
+async function handleScheduleButton(interaction) {
+  const isPrev = interaction.customId.startsWith(CUSTOM_IDS.schedulePrevPrefix);
+  const prefix = isPrev ? CUSTOM_IDS.schedulePrevPrefix : CUSTOM_IDS.scheduleNextPrefix;
+  const [meetCode, indexRaw] = interaction.customId.slice(prefix.length).split(':');
+  const meet = config.MEET_BY_CODE[meetCode];
+
+  if (!meet) {
+    await interaction.reply({ content: '알 수 없는 경마장입니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.deferUpdate();
+  const currentIndex = Number(indexRaw);
+  const nextIndex = currentIndex + (isPrev ? -1 : 1);
+  const days = await loadWeekSchedule(meetCode);
+  await interaction.editReply(buildScheduleMessage(days, nextIndex, meetCode));
 }
 
 async function handleMeetSelect(interaction) {
@@ -349,6 +547,24 @@ async function onInteractionCreate(interaction) {
       return;
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === '내마권') {
+      await handleMyTicketsCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === '경마일정') {
+      await handleScheduleCommand(interaction);
+      return;
+    }
+
+    if (interaction.isButton() && (
+      interaction.customId.startsWith(CUSTOM_IDS.schedulePrevPrefix)
+      || interaction.customId.startsWith(CUSTOM_IDS.scheduleNextPrefix)
+    )) {
+      await handleScheduleButton(interaction);
+      return;
+    }
+
     if (interaction.isStringSelectMenu() && interaction.customId === CUSTOM_IDS.meetSelect) {
       await handleMeetSelect(interaction);
       return;
@@ -378,6 +594,7 @@ async function main() {
   }
 
   await mongoose.connect(config.mongoUri);
+  await Ticket.createIndexes();
 
   const client = new Client({
     intents: [GatewayIntentBits.Guilds],
@@ -403,6 +620,8 @@ if (require.main === module) {
 module.exports = {
   getCommandData,
   handleTicketCommand,
+  handleMyTicketsCommand,
+  handleScheduleCommand,
   handleMeetSelect,
   handleTicketModal,
 };

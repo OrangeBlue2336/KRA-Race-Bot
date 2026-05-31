@@ -47,4 +47,9 @@ ticketSchema.index(
   { unique: true },
 );
 
+ticketSchema.index(
+  { settledAt: 1 },
+  { expireAfterSeconds: 30 * 24 * 60 * 60 },
+);
+
 module.exports = mongoose.model('Ticket', ticketSchema);
