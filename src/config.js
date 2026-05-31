@@ -62,6 +62,8 @@ const MEETS = [
 ];
 
 const MEET_BY_CODE = Object.fromEntries(MEETS.map((meet) => [meet.code, meet]));
+const renderExternalUrl = process.env.RENDER_EXTERNAL_URL
+  || (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '');
 
 module.exports = {
   discordToken: process.env.DISCORD_TOKEN,
@@ -73,6 +75,9 @@ module.exports = {
   resultCheckIntervalMs: Number(process.env.RESULT_CHECK_INTERVAL_MS || 60_000),
   resultCheckDelayMinutes: Number(process.env.RESULT_CHECK_DELAY_MINUTES || 10),
   ticketCloseBeforeStartMinutes: Number(process.env.TICKET_CLOSE_BEFORE_START_MINUTES || 5),
+  port: Number(process.env.PORT || 3000),
+  keepAliveUrl: process.env.KEEP_ALIVE_URL || renderExternalUrl,
+  keepAliveIntervalMs: Number(process.env.KEEP_ALIVE_INTERVAL_MS || 10 * 60_000),
   BET_TYPES,
   BET_TYPE_BY_NAME,
   MEETS,

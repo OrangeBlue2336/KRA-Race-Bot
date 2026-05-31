@@ -19,6 +19,7 @@ const mongoose = require('mongoose');
 const config = require('./config');
 const Ticket = require('./models/Ticket');
 const kraApi = require('./services/kraApi');
+const { startKeepAlive } = require('./services/keepAliveServer');
 const { startSettlementWorker } = require('./services/settlementService');
 const {
   parseAmount,
@@ -592,6 +593,12 @@ async function main() {
   if (!config.discordToken || !config.mongoUri) {
     throw new Error('DISCORD_TOKEN, MONGODB_URI 환경변수가 필요합니다.');
   }
+
+  startKeepAlive({
+    port: config.port,
+    url: config.keepAliveUrl,
+    intervalMs: config.keepAliveIntervalMs,
+  });
 
   await mongoose.connect(config.mongoUri);
   await Ticket.createIndexes();
