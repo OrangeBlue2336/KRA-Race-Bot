@@ -114,13 +114,22 @@ function evaluateTicket(ticket, top3, summary) {
   const dusu = Number(ticket.dusu || topNumbers.length);
 
   if (ticket.isTest) {
-    return {
-      won: true,
-      odds: Number(summary?.winOdds || summary?.qnlOdds || summary?.triOdds || 1),
-      winningNumbers: topNumbers.slice(0, Math.min(3, topNumbers.length)),
-      note: '테스트 입력으로 적중 처리되었습니다.',
-    };
-  }
+    const testOddsMap = {
+    '단승식':   Number(summary?.winOdds || 0),
+    '연승식':   Number(String(summary?.plcOdds || '0').split('-')[0] || 0),
+    '복연승식': Number(String(summary?.qplOdds || '0').split(',')[0] || 0),
+    '복승식':   Number(summary?.qnlOdds || 0),
+    '쌍승식':   Number(summary?.exaOdds || 0),
+    '삼복승식': Number(summary?.tlaOdds || 0),
+    '삼쌍승식': Number(summary?.triOdds || 0),
+  };
+  return {
+    won: true,
+    odds: testOddsMap[ticket.betType] || 1,
+    winningNumbers: topNumbers.slice(0, Math.min(3, topNumbers.length)),
+    note: '테스트 입력으로 적중 처리되었습니다.',
+  };
+}
 
   switch (ticket.betType) {
     case '단승식': {
