@@ -54,7 +54,14 @@ function getCommandData() {
   return [
     new SlashCommandBuilder()
       .setName('마권발매')
-      .setDescription('실제 경마 결과와 연동되는 가상 마권을 발매합니다.'),
+      .setDescription('실제 경마 결과와 연동되는 가상 마권을 발매합니다.')
+      .addStringOption((option) => option
+        .setName('경마장')
+        .setDescription('베팅할 경마장을 선택합니다.')
+        .setRequired(true)
+        .addChoices(
+          ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
+        )),
     new SlashCommandBuilder()
       .setName('내마권')
       .setDescription('지금까지 발매한 내 가상 마권 내역을 확인합니다.'),
@@ -329,14 +336,38 @@ function getModalSelectValue(interaction, customId) {
 }
 
 async function handleTicketCommand(interaction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const meetCode = interaction.options.getString('경마장', true);
+  const meet = config.MEET_BY_CODE[meetCode];
 
-  await warmScheduleCache();
+  if (!meet) {
+    await interaction.reply({ content: '알 수 없는 경마장입니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
 
-  await interaction.editReply({
-    content: '**마권 발매**\n베팅할 경마장을 선택하세요.',
-    components: [createMeetSelectRow()],
-  });
+  let races = availableRacesFor(meetCode);
+
+  if (races.length === 0) {
+    try {
+      await loadSchedule(meet);
+      races = availableRacesFor(meetCode);
+    } catch (error) {
+      await interaction.reply({
+        content: `경주 일정을 불러오지 못했습니다: ${error.message}`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+  }
+
+  if (races.length === 0) {
+    await interaction.reply({
+      content: `${meet.name} 경마장에 현재 베팅 가능한 경주가 없습니다. 오늘 경주가 없거나 발매 마감 시간이 지났습니다.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.showModal(createTicketModal(meetCode, races));
 }
 
 async function handleMyTicketsCommand(interaction) {
@@ -566,11 +597,6 @@ async function onInteractionCreate(interaction) {
       return;
     }
 
-    if (interaction.isStringSelectMenu() && interaction.customId === CUSTOM_IDS.meetSelect) {
-      await handleMeetSelect(interaction);
-      return;
-    }
-
     if (interaction.isModalSubmit() && interaction.customId.startsWith(CUSTOM_IDS.modalPrefix)) {
       await handleTicketModal(interaction);
     }
@@ -593,6 +619,9 @@ async function main() {
   if (!config.discordToken || !config.mongoUri) {
     throw new Error('DISCORD_TOKEN, MONGODB_URI 환경변수가 필요합니다.');
   }
+
+  await warmScheduleCache();
+  setInterval(() => warmScheduleCache().catch(console.error), 4 * 60_000);
 
   startKeepAlive({
     port: config.port,

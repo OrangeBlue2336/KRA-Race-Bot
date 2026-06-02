@@ -3,9 +3,16 @@ const config = require('./config');
 
 const commands = [
   new SlashCommandBuilder()
-    .setName('마권발매')
-    .setDescription('실제 경마 결과와 연동되는 가상 마권을 발매합니다.')
-    .toJSON(),
+  .setName('마권발매')
+  .setDescription('실제 경마 결과와 연동되는 가상 마권을 발매합니다.')
+  .addStringOption((option) => option
+    .setName('경마장')
+    .setDescription('베팅할 경마장을 선택합니다.')
+    .setRequired(true)
+    .addChoices(
+      ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
+    ))
+  .toJSON(),
   new SlashCommandBuilder()
     .setName('내마권')
     .setDescription('지금까지 발매한 내 가상 마권 내역을 확인합니다.')
