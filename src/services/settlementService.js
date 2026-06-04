@@ -8,6 +8,16 @@ const { MEET_BY_CODE, resultCheckDelayMinutes, resultCheckIntervalMs } = require
 let workerTimer = null;
 let workerRunning = false;
 
+const PLACE_BADGES = {
+  1: '🥇',
+  2: '🥈',
+  3: '🥉',
+};
+
+function getPlaceBadge(place) {
+  return PLACE_BADGES[place] || `${place}착`;
+}
+
 function normalizeCombo(numbers, ordered = false) {
   const values = numbers.map((number) => String(number));
   return ordered ? values.join('-') : [...values].sort((a, b) => Number(a) - Number(b)).join('-');
@@ -60,7 +70,7 @@ function buildSummaryFromIntegratedOdds(top3, oddsItems) {
 function formatTop3(top3) {
   if (!top3.length) return '결과 정보 없음';
   return top3
-    .map((result) => `${result.ord}착: ${result.chulNo}번 ${result.hrName || '이름 미상'}`)
+    .map((result) => `${getPlaceBadge(result.ord)}: ${result.chulNo}번 ${result.hrName || '이름 미상'}`)
     .join('\n');
 }
 
@@ -74,8 +84,8 @@ function buildResultEmbed(ticket, evaluation, top3) {
     .setTitle(evaluation.won ? '마권 적중!' : '마권 적중 실패')
     .setDescription(
       evaluation.won
-        ? `${ticket.amount.toLocaleString()}원 x 배당률 ${odds || 1} = ${payout.toLocaleString()}원 환급입니다.`
-        : `${ticket.amount.toLocaleString()}원을 잃었습니다!`,
+        ? `${ticket.amount.toLocaleString()}원 x 배당률 ${odds || 1} = **${payout.toLocaleString()}원 환급**입니다.`
+        : `**${ticket.amount.toLocaleString()}원**을 잃었습니다!`,
     )
     .addFields(
       { name: '경주', value: `${ticket.meet} ${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: false },
