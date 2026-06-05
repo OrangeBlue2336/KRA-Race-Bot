@@ -46,6 +46,8 @@ const CUSTOM_IDS = {
   modalPrefix: 'ticket:modal:',
   schedulePrevPrefix: 'schedule:prev:',
   scheduleNextPrefix: 'schedule:next:',
+  myTicketsPrevPrefix: 'mytickets:prev:',
+  myTicketsNextPrefix: 'mytickets:next:',
 };
 
 const scheduleCache = new Map();
@@ -177,17 +179,17 @@ function buildMyTicketsEmbeds(tickets) {
   }
 
   const chunks = [];
-  for (let index = 0; index < tickets.length; index += 8) {
-    chunks.push(tickets.slice(index, index + 8));
+  for (let index = 0; index < tickets.length; index += 5) {
+    chunks.push(tickets.slice(index, index + 5));
   }
 
   return chunks.map((chunk, chunkIndex) => (
     new EmbedBuilder()
       .setColor(0x3d8af7)
-      .setTitle(chunkIndex === 0 ? '내 마권' : `내 마권 ${chunkIndex + 1}`)
-      .setDescription(chunk.map((ticket, index) => formatTicketLine(ticket, chunkIndex * 8 + index + 1)).join('\n\n'))
+      .setTitle(chunkIndex === 0 ? '내 마권' : `내 마권 (${chunkIndex + 1}/${chunks.length})`)
+      .setDescription(chunk.map((ticket, index) => formatTicketLine(ticket, chunkIndex * 5 + index + 1)).join('\n\n'))
       .setFooter({
-        text: `총 ${tickets.length}장 · 결과 확정 마권은 30일 뒤 자동 삭제됩니다.`,
+        text: `${chunkIndex + 1}/${chunks.length} 페이지 · 총 ${tickets.length}장 · 최신 순`,
       })
   ));
 }
@@ -378,12 +380,26 @@ async function handleMyTicketsCommand(interaction) {
     .lean();
 
   const embeds = buildMyTicketsEmbeds(tickets);
-  await interaction.editReply({ embeds: embeds.slice(0, 10) });
-
-  for (let index = 10; index < embeds.length; index += 10) {
-    await interaction.followUp({
-      embeds: embeds.slice(index, index + 10),
-      flags: MessageFlags.Ephemeral,
+  
+  if (embeds.length === 1) {
+    await interaction.editReply({ embeds });
+  } else {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${CUSTOM_IDS.myTicketsPrevPrefix}0`)
+        .setLabel('이전')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId(`${CUSTOM_IDS.myTicketsNextPrefix}0`)
+        .setLabel('다음')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(embeds.length === 1),
+    );
+    
+    await interaction.editReply({
+      embeds: [embeds[0]],
+      components: [row],
     });
   }
 }
@@ -401,6 +417,43 @@ async function handleScheduleCommand(interaction) {
   const days = await loadWeekSchedule(meetCode);
   const index = firstScheduleIndex(days);
   await interaction.editReply(buildScheduleMessage(days, index, meetCode));
+}
+
+async function handleMyTicketsButton(interaction) {
+  const isPrev = interaction.customId.startsWith(CUSTOM_IDS.myTicketsPrevPrefix);
+  const prefix = isPrev ? CUSTOM_IDS.myTicketsPrevPrefix : CUSTOM_IDS.myTicketsNextPrefix;
+  const currentPageIndex = Number(interaction.customId.slice(prefix.length));
+  const nextPageIndex = currentPageIndex + (isPrev ? -1 : 1);
+
+  await interaction.deferUpdate();
+
+  const tickets = await Ticket.find({ discordId: interaction.user.id })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const embeds = buildMyTicketsEmbeds(tickets);
+  
+  if (nextPageIndex < 0 || nextPageIndex >= embeds.length) {
+    return;
+  }
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${CUSTOM_IDS.myTicketsPrevPrefix}${nextPageIndex}`)
+      .setLabel('이전')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(nextPageIndex === 0),
+    new ButtonBuilder()
+      .setCustomId(`${CUSTOM_IDS.myTicketsNextPrefix}${nextPageIndex}`)
+      .setLabel('다음')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(nextPageIndex === embeds.length - 1),
+  );
+
+  await interaction.editReply({
+    embeds: [embeds[nextPageIndex]],
+    components: [row],
+  });
 }
 
 async function handleScheduleButton(interaction) {
@@ -594,6 +647,14 @@ async function onInteractionCreate(interaction) {
       || interaction.customId.startsWith(CUSTOM_IDS.scheduleNextPrefix)
     )) {
       await handleScheduleButton(interaction);
+      return;
+    }
+
+    if (interaction.isButton() && (
+      interaction.customId.startsWith(CUSTOM_IDS.myTicketsPrevPrefix)
+      || interaction.customId.startsWith(CUSTOM_IDS.myTicketsNextPrefix)
+    )) {
+      await handleMyTicketsButton(interaction);
       return;
     }
 
