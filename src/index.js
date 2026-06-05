@@ -559,7 +559,7 @@ async function handleTicketModal(interaction) {
   const embed = new EmbedBuilder()
     .setColor(0x3d8af7)
     .setTitle('마권 발매 완료')
-    .setDescription('경주 출발 10분 후부터 결과를 확인해 DM으로 알려드립니다.')
+    .setDescription('경주 출발 5분 후부터 결과를 확인해 DM으로 알려드립니다.')
     .addFields(
       { name: '경마장', value: ticket.meet, inline: true },
       { name: '경주', value: `${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: true },

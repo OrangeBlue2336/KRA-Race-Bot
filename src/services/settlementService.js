@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const Ticket = require('../models/Ticket');
 const kraApi = require('./kraApi');
 const { evaluateTicket } = require('../utils/betting');
@@ -7,6 +7,12 @@ const { MEET_BY_CODE, resultCheckDelayMinutes, resultCheckIntervalMs } = require
 
 let workerTimer = null;
 let workerRunning = false;
+
+function buildVodUrl(meetCode, rcDate, rcNo) {
+  const apiMeet = MEET_BY_CODE[meetCode]?.apiMeet;
+  if (!apiMeet) return null;
+  return `https://kraplayer.starplayer.net/kra/vod/starplayer.php?meet=${apiMeet}&rcdate=${rcDate}&rcno=${rcNo}&vod_type=r`;
+}
 
 const PLACE_BADGES = {
   1: '🥇',
@@ -81,7 +87,7 @@ function buildResultEmbed(ticket, evaluation, top3) {
 
   const embed = new EmbedBuilder()
     .setColor(evaluation.won ? 0x2ecc71 : 0xe74c3c)
-    .setTitle(evaluation.won ? '마권 적중!' : '마권 적중 실패')
+    .setTitle(evaluation.won ? '💵 마권 적중!' : '💸 마권 적중 실패')
     .setDescription(
       evaluation.won
         ? `${ticket.amount.toLocaleString()}원 x 배당률 ${odds || 1} = **${payout.toLocaleString()}원 환급**입니다.`
@@ -108,7 +114,18 @@ function buildResultEmbed(ticket, evaluation, top3) {
 async function notifyUser(client, ticket, evaluation, top3) {
   const { embed, payout, odds } = buildResultEmbed(ticket, evaluation, top3);
   const user = await client.users.fetch(ticket.discordId);
-  await user.send({ embeds: [embed] });
+
+  const vodUrl = buildVodUrl(ticket.meetCode, ticket.rcDate, ticket.rcNo);
+  const components = vodUrl
+    ? [new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('🎬 경주 영상 보기')
+          .setURL(vodUrl)
+          .setStyle(ButtonStyle.Link),
+      )]
+    : [];
+
+  await user.send({ embeds: [embed], components });
   return { payout, odds };
 }
 
