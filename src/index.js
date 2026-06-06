@@ -149,20 +149,32 @@ function firstScheduleIndex(days) {
 
 function ticketStatusText(ticket) {
   if (ticket.status === 'pending' || ticket.status === 'checking') return '확인중';
-  if (ticket.status === 'won') return `적중 / 배당률 ${ticket.odds || 0} / 환급 ${Number(ticket.payout || 0).toLocaleString()}원`;
-  if (ticket.status === 'lost') return `실패 / ${Number(ticket.amount || 0).toLocaleString()}원을 잃었습니다`;
+  if (ticket.status === 'won') return `적중 / 배당률 ${ticket.odds || 0} / **환급 ${Number(ticket.payout || 0).toLocaleString()}원**`;
+  if (ticket.status === 'lost') return `실패 / **${Number(ticket.amount || 0).toLocaleString()}원을 잃었습니다**`;
   if (ticket.status === 'void') return '무효';
   return ticket.status;
+}
+
+function getPlaceBadge(place) {
+  const badges = { 1: '🥇', 2: '🥈', 3: '🥉' };
+  return badges[place] || `${place}착`;
+}
+
+function getStatusEmoji(ticket) {
+  if (ticket.status === 'won') return '✅';
+  if (ticket.status === 'lost') return '❌';
+  return '';
 }
 
 function formatTicketLine(ticket, index) {
   const horses = ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`;
   const result = ticket.resultTop3?.length
-    ? `\n결과: ${ticket.resultTop3.map((r) => `${r.ord}착 ${r.chulNo}번 ${r.hrName || ''}`.trim()).join(' / ')}`
+    ? `\n결과: ${ticket.resultTop3.map((r) => `${getPlaceBadge(r.ord)} **${r.chulNo}번** ${r.hrName || ''}`.trim()).join(' / ')}`
     : '';
+  const statusEmoji = getStatusEmoji(ticket);
   return [
-    `**${index}. ${ticket.meet} ${ticket.rcNo}R** (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`,
-    `${ticket.betType} / ${horses} / ${Number(ticket.amount).toLocaleString()}원`,
+    `**${index}. ${ticket.meet} ${ticket.rcNo}R ${statusEmoji}** (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`,
+    `${ticket.betType} / ${horses} / **${Number(ticket.amount).toLocaleString()}원**`,
     `상태: ${ticketStatusText(ticket)}${result}`,
   ].join('\n');
 }
@@ -174,7 +186,7 @@ function buildMyTicketsEmbeds(tickets) {
       .setColor(0x95a5a6)
       .setTitle('내 마권')
       .setDescription('아직 발매한 마권이 없습니다.')
-      .setFooter({ text: '결과가 확정된 마권은 DB 용량 절약을 위해 30일 뒤 자동 삭제됩니다.' }),
+      .setFooter({ text: '결과가 확정된 마권은 30일 뒤 자동 삭제됩니다.' }),
     ];
   }
 
@@ -189,7 +201,7 @@ function buildMyTicketsEmbeds(tickets) {
       .setTitle(chunkIndex === 0 ? '내 마권' : `내 마권 (${chunkIndex + 1}/${chunks.length})`)
       .setDescription(chunk.map((ticket, index) => formatTicketLine(ticket, chunkIndex * 5 + index + 1)).join('\n\n'))
       .setFooter({
-        text: `${chunkIndex + 1}/${chunks.length} 페이지 · 총 ${tickets.length}장 · 최신 순`,
+        text: `${chunkIndex + 1}/${chunks.length} 페이지 · 총 ${tickets.length}장 · ✅ 적중 ${tickets.filter((t) => t.status === 'won').length}장 / ❌ 실패 ${tickets.filter((t) => t.status === 'lost').length}장 / 무효 ${tickets.filter((t) => t.status === 'void').length}장`,
       })
   ));
 }
