@@ -9,6 +9,9 @@ const ENDPOINTS = {
   raceSummaryResult: '/API34_1/raceSummaryResult_1',
   raceResult: '/API4_3/raceResult_3',
   integratedInfo: '/API160_1/integratedInfo_1',
+  jockeyChangeDetail: '/API300/Jockey_Change_Detail',
+  raceHorseCancelInfo: '/API9_1/raceHorseCancelInfo_1',
+  totalHorseInfo: '/API42_1/totalHorseInfo_1',
 };
 
 const xmlParser = new XMLParser({
@@ -151,10 +154,55 @@ async function getIntegratedOdds(meet, rcDate, rcNo) {
     .filter((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo));
 }
 
+async function getJockeyChanges(meet, rcDate, rcNo) {
+  const items = await requestKra(ENDPOINTS.jockeyChangeDetail, {
+    meet,
+    rc_date: rcDate,
+    rc_no: rcNo,
+    numOfRows: 100,
+  });
+  return items
+    .map(normalizeNumberFields)
+    .filter((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo))
+    .sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0));
+}
+
+async function getRaceHorseCancels(meet, rcDate, rcNo) {
+  const items = await requestKra(ENDPOINTS.raceHorseCancelInfo, {
+    meet,
+    rc_date: rcDate,
+    numOfRows: 500,
+  });
+  return items
+    .map(normalizeNumberFields)
+    .filter((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo))
+    .sort((a, b) => Number(a.chulNo || 0) - Number(b.chulNo || 0));
+}
+
+async function searchHorseInfoByName(hrName) {
+  const items = await requestKra(ENDPOINTS.totalHorseInfo, {
+    hr_name: hrName,
+    numOfRows: 25,
+  });
+  return items.map(normalizeNumberFields);
+}
+
+async function getHorseInfoByNo(hrNo) {
+  const items = await requestKra(ENDPOINTS.totalHorseInfo, {
+    hr_no: hrNo,
+    numOfRows: 10,
+  });
+  return items.map(normalizeNumberFields).find((item) => String(item.hrNo) === String(hrNo)) || null;
+}
+
 module.exports = {
   getRaceSchedule,
   getEntryInfo,
   getRaceSummaryResult,
   getRaceResult,
   getIntegratedOdds,
+  getJockeyChanges,
+  getRaceHorseCancels,
+  searchHorseInfoByName,
+  getHorseInfoByNo,
 };

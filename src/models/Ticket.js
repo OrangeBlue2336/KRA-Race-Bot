@@ -34,6 +34,8 @@ const ticketSchema = new mongoose.Schema(
         hrName: String,
       },
     ],
+    alertNotifiedEventKeys: [{ type: String }],
+    alertError: { type: String },
     settlementError: { type: String },
     settledAt: { type: Date },
   },

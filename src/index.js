@@ -17,8 +17,10 @@ const {
 } = require('discord.js');
 const mongoose = require('mongoose');
 const config = require('./config');
+const AlertSubscription = require('./models/AlertSubscription');
 const Ticket = require('./models/Ticket');
 const kraApi = require('./services/kraApi');
+const { ALERT_TYPES, checkTicketAlerts, startAlertWorker } = require('./services/alertService');
 const { startKeepAlive } = require('./services/keepAliveServer');
 const { startSettlementWorker } = require('./services/settlementService');
 const {
@@ -48,6 +50,9 @@ const CUSTOM_IDS = {
   scheduleNextPrefix: 'schedule:next:',
   myTicketsPrevPrefix: 'mytickets:prev:',
   myTicketsNextPrefix: 'mytickets:next:',
+  alertCancelConfirmPrefix: 'alert:cancel:confirm:',
+  alertCancelDismissPrefix: 'alert:cancel:dismiss:',
+  horseInfoSelectPrefix: 'horseinfo:select:',
 };
 
 const scheduleCache = new Map();
@@ -77,6 +82,33 @@ function getCommandData() {
         .addChoices(
           ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
         )),
+    new SlashCommandBuilder()
+      .setName('알림구독')
+      .setDescription('마권 발매 후 기수 변경 또는 출전 취소 알림을 DM으로 받습니다.')
+      .addStringOption((option) => option
+        .setName('경마장')
+        .setDescription('알림을 받을 경마장을 선택합니다.')
+        .setRequired(true)
+        .addChoices(
+          ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
+        ))
+      .addStringOption((option) => option
+        .setName('알림종류')
+        .setDescription('구독할 알림 종류를 선택합니다.')
+        .setRequired(true)
+        .addChoices(
+          { name: ALERT_TYPES.JOCKEY_CHANGE.label, value: ALERT_TYPES.JOCKEY_CHANGE.value },
+          { name: ALERT_TYPES.HORSE_CANCEL.label, value: ALERT_TYPES.HORSE_CANCEL.value },
+        )),
+    new SlashCommandBuilder()
+      .setName('말정보')
+      .setDescription('말 이름으로 KRA 마필종합 상세정보를 검색합니다.')
+      .addStringOption((option) => option
+        .setName('말이름')
+        .setDescription('검색할 말 이름을 입력합니다.')
+        .setRequired(true)
+        .setMinLength(1)
+        .setMaxLength(40)),
   ];
 }
 
@@ -349,6 +381,153 @@ function getModalSelectValue(interaction, customId) {
   return field?.values?.[0] || null;
 }
 
+function cleanValue(value) {
+  if (value === undefined || value === null || value === '' || value === '-') return '미상';
+  return String(value);
+}
+
+function formatApiDate(value) {
+  const date = String(value || '');
+  if (!/^\d{8}$/.test(date) || date === '99991231') return '미상';
+  return formatRaceDate(date);
+}
+
+function formatMoney(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? `${amount.toLocaleString()}원` : '미상';
+}
+
+function alertTypeLabel(alertType) {
+  return Object.values(ALERT_TYPES).find((item) => item.value === alertType)?.label || alertType;
+}
+
+function buildAlertSubscriptionEmbed(meet, alertType) {
+  return new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle('알림 구독 완료')
+    .setDescription(`${meet.name} 경마장의 ${alertTypeLabel(alertType)} 알림을 구독했습니다.`)
+    .addFields({
+      name: '알림 방식',
+      value: '구독한 경마장의 마권을 발매하면, 해당 경주의 변경 사항을 5분 간격으로 확인해 DM으로 알려드립니다.',
+      inline: false,
+    })
+    .setTimestamp();
+}
+
+function buildAlertCancelMessage(meetCode, alertType) {
+  const meet = config.MEET_BY_CODE[meetCode];
+  const embed = new EmbedBuilder()
+    .setColor(0xe67e22)
+    .setTitle('알림 구독 취소')
+    .setDescription(`${meet.name} 경마장의 ${alertTypeLabel(alertType)} 알림 구독을 취소할까요?`)
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${CUSTOM_IDS.alertCancelConfirmPrefix}${meetCode}:${alertType}`)
+      .setLabel('취소하기')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`${CUSTOM_IDS.alertCancelDismissPrefix}${meetCode}:${alertType}`)
+      .setLabel('유지하기')
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  return { embeds: [embed], components: [row], flags: MessageFlags.Ephemeral };
+}
+
+function buildHorseSearchMessage(horses, userId) {
+  const lines = horses.slice(0, 25).map((horse, index) => (
+    `**${index + 1}. ${cleanValue(horse.hrNm)}** / 마번 ${cleanValue(horse.hrNo)} / 출생일 ${formatApiDate(horse.birthDt)}`
+  ));
+
+  const embed = new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle('말 검색 결과')
+    .setDescription(lines.join('\n').slice(0, 4000))
+    .setFooter({ text: '상세 정보를 볼 말을 선택하세요.' });
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`${CUSTOM_IDS.horseInfoSelectPrefix}${userId}`)
+    .setPlaceholder('말 선택')
+    .addOptions(
+      horses.slice(0, 25).map((horse) => (
+        new StringSelectMenuOptionBuilder()
+          .setLabel(cleanValue(horse.hrNm).slice(0, 100))
+          .setDescription(`마번 ${cleanValue(horse.hrNo)} · ${formatApiDate(horse.birthDt)}`.slice(0, 100))
+          .setValue(String(horse.hrNo))
+      )),
+    );
+
+  return {
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(menu)],
+  };
+}
+
+function compactLines(lines) {
+  return lines.filter(Boolean).join('\n').slice(0, 1024) || '미상';
+}
+
+function buildHorseInfoEmbed(horse) {
+  const name = cleanValue(horse.hrNm);
+  const englishName = cleanValue(horse.hrEngNm);
+  const record = [
+    `통산 ${cleanValue(horse.rcCnt)}전 ${cleanValue(horse.fstCnt)}승 / 2착 ${cleanValue(horse.sndCnt)}회 / 3착 ${cleanValue(horse.trdCnt)}회`,
+    `승률 ${cleanValue(horse.winRate)}% / 복승률 ${cleanValue(horse.quinRate)}%`,
+    `총 수득상금 ${formatMoney(horse.amt)}`,
+  ];
+
+  return new EmbedBuilder()
+    .setColor(0x3d8af7)
+    .setTitle(`🏇 ${name} 말 정보`)
+    .setDescription(englishName === '미상' ? `마번 ${cleanValue(horse.hrNo)}` : `${englishName} · 마번 ${cleanValue(horse.hrNo)}`)
+    .addFields(
+      {
+        name: '기본 정보',
+        value: compactLines([
+          `출생일: ${formatApiDate(horse.birthDt)} / 나이: ${cleanValue(horse.age)}세`,
+          `성별: ${cleanValue(horse.sex)} / 모색: ${cleanValue(horse.color)}`,
+          `산지: ${cleanValue(horse.prdCty || horse.sanji)} / 품종: ${cleanValue(horse.breed)}`,
+        ]),
+        inline: false,
+      },
+      {
+        name: '성적',
+        value: compactLines(record),
+        inline: false,
+      },
+      {
+        name: '관계자',
+        value: compactLines([
+          `마주: ${cleanValue(horse.owNm)}`,
+          `조교사/관리자: ${cleanValue(horse.mgrNm || horse.fmgrNm)}`,
+          `소재지: ${cleanValue(horse.poNm || horse.kraPoNm || horse.restAreaNm)}`,
+        ]),
+        inline: false,
+      },
+      {
+        name: '혈통',
+        value: compactLines([
+          `부마: ${cleanValue(horse.fhrNm)} (${cleanValue(horse.fhrCty)})`,
+          `모마: ${cleanValue(horse.mhrNm)} (${cleanValue(horse.mhrCty)})`,
+          `외조부: ${cleanValue(horse.mhrFhrNm)} (${cleanValue(horse.mhrFhrCty)})`,
+        ]),
+        inline: false,
+      },
+      {
+        name: '최근 정보',
+        value: compactLines([
+          `데뷔일: ${formatApiDate(horse.fdebutDt)}`,
+          `최근 출전일: ${formatApiDate(horse.lchulDt)}`,
+          `KRA 입사일: ${formatApiDate(horse.kraInDt)}`,
+        ]),
+        inline: false,
+      },
+    )
+    .setTimestamp();
+}
+
 async function handleTicketCommand(interaction) {
   const meetCode = interaction.options.getString('경마장', true);
   const meet = config.MEET_BY_CODE[meetCode];
@@ -431,6 +610,60 @@ async function handleScheduleCommand(interaction) {
   await interaction.editReply(buildScheduleMessage(days, index, meetCode));
 }
 
+async function handleAlertSubscribeCommand(interaction) {
+  const meetCode = interaction.options.getString('경마장', true);
+  const alertType = interaction.options.getString('알림종류', true);
+  const meet = config.MEET_BY_CODE[meetCode];
+
+  if (!meet || !Object.values(ALERT_TYPES).some((item) => item.value === alertType)) {
+    await interaction.reply({ content: '알 수 없는 구독 옵션입니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const existing = await AlertSubscription.findOne({
+    discordId: interaction.user.id,
+    meetCode,
+    alertType,
+  });
+
+  if (existing) {
+    await interaction.reply(buildAlertCancelMessage(meetCode, alertType));
+    return;
+  }
+
+  await AlertSubscription.create({
+    discordId: interaction.user.id,
+    username: interaction.user.username,
+    meetCode,
+    meet: meet.name,
+    alertType,
+  });
+
+  await interaction.reply({
+    embeds: [buildAlertSubscriptionEmbed(meet, alertType)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleHorseInfoCommand(interaction) {
+  await interaction.deferReply();
+
+  const horseName = interaction.options.getString('말이름', true).trim();
+  const horses = await kraApi.searchHorseInfoByName(horseName);
+
+  if (horses.length === 0) {
+    await interaction.editReply(`'${horseName}' 검색 결과가 없습니다.`);
+    return;
+  }
+
+  if (horses.length === 1) {
+    await interaction.editReply({ embeds: [buildHorseInfoEmbed(horses[0])] });
+    return;
+  }
+
+  await interaction.editReply(buildHorseSearchMessage(horses, interaction.user.id));
+}
+
 async function handleMyTicketsButton(interaction) {
   const isPrev = interaction.customId.startsWith(CUSTOM_IDS.myTicketsPrevPrefix);
   const prefix = isPrev ? CUSTOM_IDS.myTicketsPrevPrefix : CUSTOM_IDS.myTicketsNextPrefix;
@@ -484,6 +717,63 @@ async function handleScheduleButton(interaction) {
   const nextIndex = currentIndex + (isPrev ? -1 : 1);
   const days = await loadWeekSchedule(meetCode);
   await interaction.editReply(buildScheduleMessage(days, nextIndex, meetCode));
+}
+
+async function handleAlertCancelButton(interaction) {
+  const isConfirm = interaction.customId.startsWith(CUSTOM_IDS.alertCancelConfirmPrefix);
+  const prefix = isConfirm ? CUSTOM_IDS.alertCancelConfirmPrefix : CUSTOM_IDS.alertCancelDismissPrefix;
+  const [meetCode, alertType] = interaction.customId.slice(prefix.length).split(':');
+  const meet = config.MEET_BY_CODE[meetCode];
+
+  if (!meet) {
+    await interaction.update({ content: '알 수 없는 경마장입니다.', embeds: [], components: [] });
+    return;
+  }
+
+  if (!isConfirm) {
+    await interaction.update({
+      content: `${meet.name} ${alertTypeLabel(alertType)} 알림 구독을 유지합니다.`,
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+
+  const result = await AlertSubscription.deleteOne({
+    discordId: interaction.user.id,
+    meetCode,
+    alertType,
+  });
+
+  await interaction.update({
+    content: result.deletedCount > 0
+      ? `${meet.name} ${alertTypeLabel(alertType)} 알림 구독을 취소했습니다.`
+      : '이미 취소되었거나 찾을 수 없는 구독입니다.',
+    embeds: [],
+    components: [],
+  });
+}
+
+async function handleHorseInfoSelect(interaction) {
+  const ownerId = interaction.customId.slice(CUSTOM_IDS.horseInfoSelectPrefix.length);
+  if (ownerId !== interaction.user.id) {
+    await interaction.reply({ content: '이 검색 결과는 명령어를 실행한 사용자만 선택할 수 있습니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.deferUpdate();
+  const hrNo = interaction.values[0];
+  const horse = await kraApi.getHorseInfoByNo(hrNo);
+
+  if (!horse) {
+    await interaction.editReply({ content: '선택한 말 정보를 다시 조회하지 못했습니다.', embeds: [], components: [] });
+    return;
+  }
+
+  await interaction.editReply({
+    embeds: [buildHorseInfoEmbed(horse)],
+    components: [],
+  });
 }
 
 async function handleMeetSelect(interaction) {
@@ -620,6 +910,9 @@ async function handleTicketModal(interaction) {
     dusu,
     isTest: parsedHorses.isTest,
   });
+  checkTicketAlerts(interaction.client, ticket).catch((error) => {
+    console.error('[ticket alert check]', error);
+  });
 
   const embed = new EmbedBuilder()
     .setColor(0x3d8af7)
@@ -654,6 +947,16 @@ async function onInteractionCreate(interaction) {
       return;
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === '알림구독') {
+      await handleAlertSubscribeCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === '말정보') {
+      await handleHorseInfoCommand(interaction);
+      return;
+    }
+
     if (interaction.isButton() && (
       interaction.customId.startsWith(CUSTOM_IDS.schedulePrevPrefix)
       || interaction.customId.startsWith(CUSTOM_IDS.scheduleNextPrefix)
@@ -667,6 +970,24 @@ async function onInteractionCreate(interaction) {
       || interaction.customId.startsWith(CUSTOM_IDS.myTicketsNextPrefix)
     )) {
       await handleMyTicketsButton(interaction);
+      return;
+    }
+
+    if (interaction.isButton() && (
+      interaction.customId.startsWith(CUSTOM_IDS.alertCancelConfirmPrefix)
+      || interaction.customId.startsWith(CUSTOM_IDS.alertCancelDismissPrefix)
+    )) {
+      await handleAlertCancelButton(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === CUSTOM_IDS.meetSelect) {
+      await handleMeetSelect(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(CUSTOM_IDS.horseInfoSelectPrefix)) {
+      await handleHorseInfoSelect(interaction);
       return;
     }
 
@@ -704,6 +1025,7 @@ async function main() {
 
   await mongoose.connect(config.mongoUri);
   await Ticket.createIndexes();
+  await AlertSubscription.createIndexes();
 
   const client = new Client({
     intents: [GatewayIntentBits.Guilds],
@@ -712,6 +1034,7 @@ async function main() {
   client.once('clientReady', () => {
     console.log(`${client.user.tag} 로그인 완료`);
     startSettlementWorker(client);
+    startAlertWorker(client);
   });
 
   client.on('interactionCreate', onInteractionCreate);
@@ -731,6 +1054,8 @@ module.exports = {
   handleTicketCommand,
   handleMyTicketsCommand,
   handleScheduleCommand,
+  handleAlertSubscribeCommand,
+  handleHorseInfoCommand,
   handleMeetSelect,
   handleTicketModal,
 };
