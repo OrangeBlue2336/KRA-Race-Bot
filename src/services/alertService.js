@@ -102,11 +102,86 @@ async function sendAlert(client, ticket, alertType, item) {
   await user.send({ embeds: [buildAlertEmbed(ticket, alertType, item)] });
 }
 
+function isTicketAffectedByCancel(ticket, cancelItem) {
+  if (ticket.isTest) return false;
+  return ticket.horses.map(String).includes(String(cancelItem.chulNo));
+}
+
+function buildVoidNoticeEmbed(ticket, cancelItem) {
+  return new EmbedBuilder()
+    .setColor(0xe74c3c)
+    .setTitle('🚫 마권 무효화 안내')
+    .setDescription(
+      `**출주번호 ${cancelItem.chulNo}번 ${cancelItem.hrName || ''}**의 출전이 취소되어\n` +
+      `해당 마번이 포함된 마권이 **무효 처리**되었습니다.`
+    )
+    .addFields(
+      {
+        name: '경주',
+        value: `${ticket.meet} ${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`,
+        inline: false,
+      },
+      {
+        name: '무효화된 마권',
+        value: `${ticket.betType} / ${ticket.horses.join(', ')}번 / ${Number(ticket.amount).toLocaleString()}원`,
+        inline: false,
+      },
+      {
+        name: '재발매',
+        value: '발매 마감 전까지 동일 경주에 새 마권을 발매할 수 있습니다.',
+        inline: false,
+      },
+    )
+    .setTimestamp();
+}
+
 async function checkTicketAlerts(client, ticket, apiCache = new Map()) {
   const alertTypes = await getSubscribedAlertTypes(ticket);
+    const cancelItems = await fetchAlertItems(
+    ALERT_TYPES.HORSE_CANCEL.value, ticket, apiCache
+  );
+
+  for (const item of cancelItems) {
+    if (!isTicketAffectedByCancel(ticket, item)) continue;
+
+    const voidKey = alertEventKey(ALERT_TYPES.HORSE_CANCEL.value, item);
+
+    const reserved = await Ticket.findOneAndUpdate(
+      { _id: ticket._id, status: 'pending', voidNotifiedEventKeys: { $ne: voidKey } },
+      {
+        $set:       { status: 'void', voidReason: `출전 취소: ${item.chulNo}번 ${item.hrName || ''}` },
+        $addToSet:  { voidNotifiedEventKeys: voidKey },
+      },
+    );
+    if (!reserved) continue;
+
+    const isSubscribed = alertTypes.includes(ALERT_TYPES.HORSE_CANCEL.value);
+    const user = await client.users.fetch(ticket.discordId);
+
+    if (isSubscribed) {
+      const embed = buildAlertEmbed(ticket, ALERT_TYPES.HORSE_CANCEL.value, item)
+        .addFields({
+          name: '⚠️ 마권 무효화',
+          value:
+            '이 마번이 포함된 마권이 **무효 처리**되었습니다.\n' +
+            '발매 마감 전까지 해당 경주에서 새 마권을 발매할 수 있습니다.',
+          inline: false,
+        });
+      await user.send({ embeds: [embed] });
+
+      await Ticket.updateOne(
+        { _id: ticket._id },
+        { $addToSet: { alertNotifiedEventKeys: voidKey } },
+      );
+    } else {
+      await user.send({ embeds: [buildVoidNoticeEmbed(ticket, item)] });
+    }
+  }
+  
   if (alertTypes.length === 0) return;
 
   for (const alertType of alertTypes) {
+    if (alertType === ALERT_TYPES.HORSE_CANCEL.value) continue;
     const items = await fetchAlertItems(alertType, ticket, apiCache);
     for (const item of items) {
       const key = alertEventKey(alertType, item);

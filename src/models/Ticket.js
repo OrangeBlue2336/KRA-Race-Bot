@@ -35,6 +35,8 @@ const ticketSchema = new mongoose.Schema(
       },
     ],
     alertNotifiedEventKeys: [{ type: String }],
+    voidNotifiedEventKeys: [{ type: String }],
+    voidReason: { type: String },
     alertError: { type: String },
     settlementError: { type: String },
     settledAt: { type: Date },

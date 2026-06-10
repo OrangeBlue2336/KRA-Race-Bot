@@ -882,6 +882,14 @@ async function handleTicketModal(interaction) {
     return;
   }
 
+  await Ticket.deleteOne({
+    discordId: interaction.user.id,
+    meet: meet.name,
+    rcDate,
+    rcNo,
+    status: 'void',
+  });
+
   const existing = await Ticket.findOne({
     discordId: interaction.user.id,
     meet: meet.name,
