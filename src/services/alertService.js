@@ -137,7 +137,7 @@ function buildVoidNoticeEmbed(ticket, cancelItem) {
 
 async function checkTicketAlerts(client, ticket, apiCache = new Map()) {
   const alertTypes = await getSubscribedAlertTypes(ticket);
-    const cancelItems = await fetchAlertItems(
+  const cancelItems = await fetchAlertItems(
     ALERT_TYPES.HORSE_CANCEL.value, ticket, apiCache
   );
 
