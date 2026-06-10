@@ -146,35 +146,47 @@ async function checkTicketAlerts(client, ticket, apiCache = new Map()) {
 
     const voidKey = alertEventKey(ALERT_TYPES.HORSE_CANCEL.value, item);
 
-    const reserved = await Ticket.findOneAndUpdate(
-      { _id: ticket._id, status: 'pending', voidNotifiedEventKeys: { $ne: voidKey } },
-      {
-        $set:       { status: 'void', voidReason: `출전 취소: ${item.chulNo}번 ${item.hrName || ''}` },
-        $addToSet:  { voidNotifiedEventKeys: voidKey },
-      },
-    );
-    if (!reserved) continue;
+    try {
+      const reserved = await Ticket.findOneAndUpdate(
+        { _id: ticket._id, status: 'pending', voidNotifiedEventKeys: { $ne: voidKey } },
+        {
+          $set:       { status: 'void', voidReason: `출전 취소: ${item.chulNo}번 ${item.hrName || ''}` },
+          $addToSet:  { voidNotifiedEventKeys: voidKey },
+        },
+      );
+      if (!reserved) continue;
 
-    const isSubscribed = alertTypes.includes(ALERT_TYPES.HORSE_CANCEL.value);
-    const user = await client.users.fetch(ticket.discordId);
+      const isSubscribed = alertTypes.includes(ALERT_TYPES.HORSE_CANCEL.value);
+      const user = await client.users.fetch(ticket.discordId);
 
-    if (isSubscribed) {
-      const embed = buildAlertEmbed(ticket, ALERT_TYPES.HORSE_CANCEL.value, item)
-        .addFields({
-          name: '⚠️ 마권 무효화',
-          value:
-            '이 마번이 포함된 마권이 **무효 처리**되었습니다.\n' +
-            '발매 마감 전까지 해당 경주에서 새 마권을 발매할 수 있습니다.',
-          inline: false,
-        });
-      await user.send({ embeds: [embed] });
+      if (isSubscribed) {
+        const embed = buildAlertEmbed(ticket, ALERT_TYPES.HORSE_CANCEL.value, item)
+          .addFields({
+            name: '⚠️ 마권 무효화',
+            value:
+              '이 마번이 포함된 마권이 **무효 처리**되었습니다.\n' +
+              '발매 마감 전까지 해당 경주에서 새 마권을 발매할 수 있습니다.',
+            inline: false,
+          });
+        await user.send({ embeds: [embed] });
 
+        await Ticket.updateOne(
+          { _id: ticket._id },
+          { $addToSet: { alertNotifiedEventKeys: voidKey } },
+        );
+      } else {
+        await user.send({ embeds: [buildVoidNoticeEmbed(ticket, item)] });
+      }
+    } catch (error) {
+      // DM 전송 실패 시 void 롤백 — 다음 워커 주기에 재시도
       await Ticket.updateOne(
         { _id: ticket._id },
-        { $addToSet: { alertNotifiedEventKeys: voidKey } },
+        {
+          $set:  { status: 'pending', alertError: error.message },
+          $pull: { voidNotifiedEventKeys: voidKey },
+        },
       );
-    } else {
-      await user.send({ embeds: [buildVoidNoticeEmbed(ticket, item)] });
+      throw error;
     }
   }
   
