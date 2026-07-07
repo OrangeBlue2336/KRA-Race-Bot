@@ -1,5 +1,6 @@
 const {
   ActionRowBuilder,
+  ActivityType,
   ButtonBuilder,
   ButtonStyle,
   Client,
@@ -35,9 +36,14 @@ const {
   formatRaceTime,
   isPastTicketClose,
   normalizeRaceTime,
+  nowKST,
+  raceStartAtKST,
   todayKST,
 } = require('./utils/time');
 const dayjs = require('dayjs');
+
+const RESPONSIBLE_GAMBLING_STATUS = '도박 중독 상담은 국번 없이 1336';
+const PRESENCE_UPDATE_INTERVAL_MS = 10_000;
 
 const CUSTOM_IDS = {
   meetSelect: 'ticket:meet',
@@ -134,6 +140,65 @@ async function loadSchedule(meet, rcDate = todayKST()) {
 
 async function warmScheduleCache() {
   await Promise.allSettled(config.MEETS.map(loadSchedule));
+}
+
+function createRacePresenceMessage(races) {
+  const now = nowKST();
+  const candidates = races
+    .map((race) => ({
+      ...race,
+      closeAt: raceStartAtKST(race.rcDate, race.schStTime)
+        .subtract(config.ticketCloseBeforeStartMinutes, 'minute'),
+    }))
+    .filter((race) => race.closeAt.isAfter(now))
+    .sort((a, b) => {
+      const closeDiff = a.closeAt.valueOf() - b.closeAt.valueOf();
+      if (closeDiff !== 0) return closeDiff;
+      return Number(a.rcNo) - Number(b.rcNo);
+    });
+
+  if (candidates.length === 0) return RESPONSIBLE_GAMBLING_STATUS;
+
+  const nextRace = candidates[0];
+  const groupedRaces = candidates.filter((race) => (
+    Number(race.rcNo) === Number(nextRace.rcNo)
+    && race.closeAt.isSame(nextRace.closeAt, 'minute')
+  ));
+  const meetNames = [...new Set(groupedRaces.map((race) => race.meetName))];
+
+  return `${meetNames.join('/')} ${Number(nextRace.rcNo)}R ${nextRace.closeAt.format('HH:mm')} 발매 마감`;
+}
+
+async function loadTodayPresenceRaces() {
+  const rcDate = todayKST();
+  const results = await Promise.allSettled(config.MEETS.map((meet) => loadDaySchedule(meet, rcDate)));
+  const rejected = results.filter((result) => result.status === 'rejected');
+  if (rejected.length > 0) {
+    rejected.forEach((result) => console.error('[presence]', result.reason));
+  }
+
+  return results
+    .filter((result) => result.status === 'fulfilled')
+    .flatMap((result) => result.value);
+}
+
+function startRacePresenceWorker(client) {
+  let lastPresenceMessage = '';
+
+  const updatePresence = async () => {
+    const races = await loadTodayPresenceRaces();
+    const message = races.length > 0 ? createRacePresenceMessage(races) : RESPONSIBLE_GAMBLING_STATUS;
+    if (message === lastPresenceMessage) return;
+
+    client.user.setPresence({
+      activities: [{ name: message, type: ActivityType.Watching }],
+      status: 'online',
+    });
+    lastPresenceMessage = message;
+  };
+
+  updatePresence().catch((error) => console.error('[presence]', error));
+  return setInterval(() => updatePresence().catch((error) => console.error('[presence]', error)), PRESENCE_UPDATE_INTERVAL_MS);
 }
 
 function weekDatesFromToday() {
@@ -1041,6 +1106,7 @@ async function main() {
 
   client.once('clientReady', () => {
     console.log(`${client.user.tag} 로그인 완료`);
+    startRacePresenceWorker(client);
     startSettlementWorker(client);
     startAlertWorker(client);
   });
@@ -1066,4 +1132,6 @@ module.exports = {
   handleHorseInfoCommand,
   handleMeetSelect,
   handleTicketModal,
+  createRacePresenceMessage,
+  startRacePresenceWorker,
 };
