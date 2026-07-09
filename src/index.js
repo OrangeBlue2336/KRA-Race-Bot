@@ -42,7 +42,7 @@ const {
 } = require('./utils/time');
 const dayjs = require('dayjs');
 
-const RESPONSIBLE_GAMBLING_STATUS = '도박 중독 상담은 국번 없이 1336';
+const RESPONSIBLE_GAMBLING_STATUS = '도박 중독 상담 및 신고는 국번 없이 1336';
 const PRESENCE_UPDATE_INTERVAL_MS = 10_000;
 
 const CUSTOM_IDS = {
@@ -142,9 +142,9 @@ async function warmScheduleCache() {
   await Promise.allSettled(config.MEETS.map(loadSchedule));
 }
 
-function createRacePresenceMessage(races) {
+function getNextPresenceRaces(races, meetOrder = []) {
   const now = nowKST();
-  const candidates = races
+  const futureRaces = races
     .map((race) => ({
       ...race,
       closeAt: raceStartAtKST(race.rcDate, race.schStTime)
@@ -157,16 +157,24 @@ function createRacePresenceMessage(races) {
       return Number(a.rcNo) - Number(b.rcNo);
     });
 
-  if (candidates.length === 0) return RESPONSIBLE_GAMBLING_STATUS;
+  const nextByMeet = new Map();
+  futureRaces.forEach((race) => {
+    if (!nextByMeet.has(race.meetCode)) {
+      nextByMeet.set(race.meetCode, race);
+    }
+  });
 
-  const nextRace = candidates[0];
-  const groupedRaces = candidates.filter((race) => (
-    Number(race.rcNo) === Number(nextRace.rcNo)
-    && race.closeAt.isSame(nextRace.closeAt, 'minute')
-  ));
-  const meetNames = [...new Set(groupedRaces.map((race) => race.meetName))];
+  const orderedRaces = meetOrder
+    .filter((meetCode) => nextByMeet.has(meetCode))
+    .map((meetCode) => nextByMeet.get(meetCode));
+  const newRaces = [...nextByMeet.values()]
+    .filter((race) => !meetOrder.includes(race.meetCode));
 
-  return `${meetNames.join('/')} ${Number(nextRace.rcNo)}R ${nextRace.closeAt.format('HH:mm')} 발매 마감`;
+  return [...orderedRaces, ...newRaces];
+}
+
+function formatRacePresenceMessage(race) {
+  return `${race.meetName} ${Number(race.rcNo)}R ${race.closeAt.format('HH:mm')} 발매 마감`;
 }
 
 async function loadTodayPresenceRaces() {
@@ -184,10 +192,21 @@ async function loadTodayPresenceRaces() {
 
 function startRacePresenceWorker(client) {
   let lastPresenceMessage = '';
+  let meetOrder = [];
+  let presenceIndex = 0;
 
   const updatePresence = async () => {
     const races = await loadTodayPresenceRaces();
-    const message = races.length > 0 ? createRacePresenceMessage(races) : RESPONSIBLE_GAMBLING_STATUS;
+    const candidates = getNextPresenceRaces(races, meetOrder);
+    meetOrder = candidates.map((race) => race.meetCode);
+
+    if (presenceIndex >= candidates.length) {
+      presenceIndex = 0;
+    }
+
+    const message = candidates.length > 0
+      ? formatRacePresenceMessage(candidates[presenceIndex])
+      : RESPONSIBLE_GAMBLING_STATUS;
     if (message === lastPresenceMessage) return;
 
     client.user.setPresence({
@@ -195,6 +214,7 @@ function startRacePresenceWorker(client) {
       status: 'online',
     });
     lastPresenceMessage = message;
+    presenceIndex = candidates.length > 0 ? (presenceIndex + 1) % candidates.length : 0;
   };
 
   updatePresence().catch((error) => console.error('[presence]', error));
@@ -1132,6 +1152,7 @@ module.exports = {
   handleHorseInfoCommand,
   handleMeetSelect,
   handleTicketModal,
-  createRacePresenceMessage,
+  getNextPresenceRaces,
+  formatRacePresenceMessage,
   startRacePresenceWorker,
 };
