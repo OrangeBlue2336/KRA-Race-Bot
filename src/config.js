@@ -76,6 +76,7 @@ module.exports = {
   resultCheckDelayMinutes: Number(process.env.RESULT_CHECK_DELAY_MINUTES || 10),
   alertCheckIntervalMs: Number(process.env.ALERT_CHECK_INTERVAL_MS || 5 * 60_000),
   ticketCloseBeforeStartMinutes: Number(process.env.TICKET_CLOSE_BEFORE_START_MINUTES || 5),
+  maxRaceBetAmount: Number(process.env.MAX_RACE_BET_AMOUNT || 100_000),
   port: Number(process.env.PORT || 3000),
   keepAliveUrl: process.env.KEEP_ALIVE_URL || renderExternalUrl,
   keepAliveIntervalMs: Number(process.env.KEEP_ALIVE_INTERVAL_MS || 10 * 60_000),

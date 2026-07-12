@@ -46,10 +46,7 @@ const ticketSchema = new mongoose.Schema(
   },
 );
 
-ticketSchema.index(
-  { discordId: 1, meet: 1, rcDate: 1, rcNo: 1 },
-  { unique: true },
-);
+ticketSchema.index({ discordId: 1, meetCode: 1, rcDate: 1, rcNo: 1, status: 1 });
 
 ticketSchema.index(
   { settledAt: 1 },

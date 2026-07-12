@@ -445,7 +445,7 @@ function createTicketModal(meetCode, races) {
     .addLabelComponents(
       new LabelBuilder()
         .setLabel('베팅 금액 입력')
-        .setDescription('베팅할 금액을 입력해주세요. 1회 최소 100원, 최대 100,000원입니다.')
+        .setDescription('베팅할 금액을 입력해주세요. 한 경주당 총 100,000원까지 추가 발매할 수 있습니다.')
         .setTextInputComponent(
           new TextInputBuilder()
             .setCustomId(CUSTOM_IDS.amountInput)
@@ -457,7 +457,7 @@ function createTicketModal(meetCode, races) {
     )
     .addTextDisplayComponents(
       new TextDisplayBuilder()
-        .setContent('한번 발매한 마권은 수정/환불이 불가합니다. 신중하게 작성해주세요.'),
+        .setContent('마권은 같은 경주에 여러 장 발매할 수 있지만, 발매 후 수정/환불은 불가합니다.'),
     );
 }
 
@@ -480,6 +480,28 @@ function formatApiDate(value) {
 function formatMoney(value) {
   const amount = Number(value);
   return Number.isFinite(amount) ? `${amount.toLocaleString()}원` : '미상';
+}
+
+async function sumUserRaceBetAmount(discordId, meetCode, rcDate, rcNo) {
+  const [result] = await Ticket.aggregate([
+    {
+      $match: {
+        discordId,
+        meetCode,
+        rcDate,
+        rcNo,
+        status: { $ne: 'void' },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$amount' },
+      },
+    },
+  ]);
+
+  return result?.total || 0;
 }
 
 function alertTypeLabel(alertType) {
@@ -967,23 +989,16 @@ async function handleTicketModal(interaction) {
     return;
   }
 
-  await Ticket.deleteOne({
-    discordId: interaction.user.id,
-    meet: meet.name,
-    rcDate,
-    rcNo,
-    status: 'void',
-  });
+  const currentRaceBetAmount = await sumUserRaceBetAmount(interaction.user.id, meetCode, rcDate, rcNo);
+  const nextRaceBetAmount = currentRaceBetAmount + amount;
 
-  const existing = await Ticket.findOne({
-    discordId: interaction.user.id,
-    meet: meet.name,
-    rcDate,
-    rcNo,
-  });
-
-  if (existing) {
-    await interaction.editReply('이미 이 경주에 발매한 마권이 있습니다. 한번 발매한 마권은 수정/환불할 수 없습니다.');
+  if (nextRaceBetAmount > config.maxRaceBetAmount) {
+    const remainingAmount = Math.max(config.maxRaceBetAmount - currentRaceBetAmount, 0);
+    await interaction.editReply(
+      `${meet.name} ${rcNo}경주에 이미 ${currentRaceBetAmount.toLocaleString()}원을 베팅했습니다. `
+      + `한 경주당 베팅 한도는 ${config.maxRaceBetAmount.toLocaleString()}원이므로 `
+      + `추가 발매 가능 금액은 ${remainingAmount.toLocaleString()}원입니다.`,
+    );
     return;
   }
 
@@ -1010,13 +1025,14 @@ async function handleTicketModal(interaction) {
   const embed = new EmbedBuilder()
     .setColor(0x3d8af7)
     .setTitle('마권 발매 완료')
-    .setDescription('경주 출발 5분 후부터 결과를 확인해 DM으로 알려드립니다.')
+    .setDescription('같은 경주에 10만원까지 추가 발매할 수 있습니다. 경주 출발 5분 후부터 결과를 확인해 DM으로 알려드립니다.')
     .addFields(
       { name: '경마장', value: ticket.meet, inline: true },
       { name: '경주', value: `${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: true },
       { name: '승식', value: ticket.betType, inline: true },
       { name: '마번', value: ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`, inline: true },
       { name: '베팅 금액', value: `${ticket.amount.toLocaleString()}원`, inline: true },
+      { name: '이 경주 누적 베팅', value: `${nextRaceBetAmount.toLocaleString()}원 / ${config.maxRaceBetAmount.toLocaleString()}원`, inline: true },
     )
     .setTimestamp();
 
@@ -1102,6 +1118,20 @@ async function onInteractionCreate(interaction) {
   }
 }
 
+async function ensureDatabaseIndexes() {
+  try {
+    await Ticket.collection.dropIndex('discordId_1_meet_1_rcDate_1_rcNo_1');
+    console.log('Removed legacy unique ticket index');
+  } catch (error) {
+    if (error.code !== 26 && error.code !== 27) {
+      throw error;
+    }
+  }
+
+  await Ticket.createIndexes();
+  await AlertSubscription.createIndexes();
+}
+
 async function main() {
   if (!config.discordToken || !config.mongoUri) {
     throw new Error('DISCORD_TOKEN, MONGODB_URI 환경변수가 필요합니다.');
@@ -1117,8 +1147,7 @@ async function main() {
   });
 
   await mongoose.connect(config.mongoUri);
-  await Ticket.createIndexes();
-  await AlertSubscription.createIndexes();
+  await ensureDatabaseIndexes();
 
   const client = new Client({
     intents: [GatewayIntentBits.Guilds],
