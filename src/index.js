@@ -89,6 +89,28 @@ function getCommandData() {
           ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
         )),
     new SlashCommandBuilder()
+      .setName('경주정보')
+      .setDescription('지정한 경주의 출전마 정보를 확인합니다.')
+      .addStringOption((option) => option
+        .setName('경마장')
+        .setDescription('출전표를 확인할 경마장을 선택합니다.')
+        .setRequired(true)
+        .addChoices(
+          ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
+        ))
+      .addIntegerOption((option) => option
+        .setName('경주번호')
+        .setDescription('확인할 경주 번호를 입력합니다.')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(20))
+      .addStringOption((option) => option
+        .setName('날짜')
+        .setDescription('조회할 날짜를 YYYYMMDD 형식으로 입력합니다. 비우면 오늘로 조회합니다.')
+        .setRequired(false)
+        .setMinLength(8)
+        .setMaxLength(8)),
+    new SlashCommandBuilder()
       .setName('알림구독')
       .setDescription('마권 발매 후 기수 변경 또는 출전 취소 알림을 DM으로 받습니다.')
       .addStringOption((option) => option
@@ -358,6 +380,49 @@ function buildScheduleMessage(days, index, meetCode) {
     embeds: [embed],
     components: [row],
   };
+}
+
+function normalizeCommandDate(value) {
+  const rcDate = String(value || todayKST()).trim();
+  return /^\d{8}$/.test(rcDate) ? rcDate : null;
+}
+
+function entryHorseName(entry) {
+  return cleanValue(entry.hrName || entry.hrNm || entry.horseName);
+}
+
+function entryJockeyName(entry) {
+  return cleanValue(entry.jkName || entry.jkNm || entry.jockeyName || entry.jk);
+}
+
+function buildRaceInfoEmbed(meet, rcDate, rcNo, entries, cancels) {
+  const cancelNumbers = new Set(cancels.map((item) => String(item.chulNo)));
+  const cancelByNumber = new Map(cancels.map((item) => [String(item.chulNo), item]));
+  const lines = entries.map((entry) => {
+    const chulNo = cleanValue(entry.chulNo);
+    const isCanceled = cancelNumbers.has(String(entry.chulNo));
+    const cancel = cancelByNumber.get(String(entry.chulNo));
+    const parts = [
+      `${isCanceled ? '🚫 ' : ''}**${chulNo}번 ${entryHorseName(entry)}**`,
+      `기수: ${entryJockeyName(entry)}`,
+      entry.trName || entry.trNm ? `조교사: ${cleanValue(entry.trName || entry.trNm)}` : '',
+      entry.wgBudam || entry.budam ? `부담중량: ${cleanValue(entry.wgBudam || entry.budam)}kg` : '',
+      isCanceled && cancel?.reason ? `취소사유: ${cleanValue(cancel.reason)}` : '',
+    ].filter(Boolean);
+    return parts.join(' / ');
+  });
+
+  return new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle(`${meet.name} ${rcNo}경주 출전표`)
+    .setDescription(lines.join('\n').slice(0, 4000))
+    .addFields(
+      { name: '날짜', value: formatRaceDate(rcDate), inline: true },
+      { name: '출전마', value: `${entries.length}두`, inline: true },
+      { name: '출전 취소', value: cancels.length ? `🚫 ${cancels.length}두` : '없음', inline: true },
+    )
+    .setFooter({ text: '🚫 표시는 출전 취소된 말입니다.' })
+    .setTimestamp();
 }
 
 function availableRacesFor(meetCode) {
@@ -717,6 +782,39 @@ async function handleScheduleCommand(interaction) {
   await interaction.editReply(buildScheduleMessage(days, index, meetCode));
 }
 
+async function handleRaceInfoCommand(interaction) {
+  await interaction.deferReply();
+
+  const meetCode = interaction.options.getString('경마장', true);
+  const rcNo = interaction.options.getInteger('경주번호', true);
+  const rcDate = normalizeCommandDate(interaction.options.getString('날짜') || todayKST());
+  const meet = config.MEET_BY_CODE[meetCode];
+
+  if (!meet) {
+    await interaction.editReply('알 수 없는 경마장입니다.');
+    return;
+  }
+
+  if (!rcDate) {
+    await interaction.editReply('날짜는 YYYYMMDD 형식으로 입력해주세요. 예: 20260712');
+    return;
+  }
+
+  const [entries, cancels] = await Promise.all([
+    kraApi.getEntryInfo(meet.apiMeet, rcDate, rcNo),
+    kraApi.getRaceHorseCancels(meet.apiMeet, rcDate, rcNo),
+  ]);
+
+  if (entries.length === 0) {
+    await interaction.editReply(`${formatRaceDate(rcDate)} ${meet.name} ${rcNo}경주의 출전표를 찾지 못했습니다.`);
+    return;
+  }
+
+  await interaction.editReply({
+    embeds: [buildRaceInfoEmbed(meet, rcDate, rcNo, entries, cancels)],
+  });
+}
+
 async function handleAlertSubscribeCommand(interaction) {
   const meetCode = interaction.options.getString('경마장', true);
   const alertType = interaction.options.getString('알림종류', true);
@@ -1056,6 +1154,11 @@ async function onInteractionCreate(interaction) {
       return;
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === '경주정보') {
+      await handleRaceInfoCommand(interaction);
+      return;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === '알림구독') {
       await handleAlertSubscribeCommand(interaction);
       return;
@@ -1177,6 +1280,7 @@ module.exports = {
   handleTicketCommand,
   handleMyTicketsCommand,
   handleScheduleCommand,
+  handleRaceInfoCommand,
   handleAlertSubscribeCommand,
   handleHorseInfoCommand,
   handleMeetSelect,
