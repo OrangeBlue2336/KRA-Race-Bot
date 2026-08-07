@@ -77,6 +77,12 @@ module.exports = {
   alertCheckIntervalMs: Number(process.env.ALERT_CHECK_INTERVAL_MS || 5 * 60_000),
   ticketCloseBeforeStartMinutes: Number(process.env.TICKET_CLOSE_BEFORE_START_MINUTES || 5),
   maxRaceBetAmount: Number(process.env.MAX_RACE_BET_AMOUNT || 100_000),
+  signupBonusMoney: Number(process.env.SIGNUP_BONUS_MONEY || 100_000),
+  dailyBaseMoney: Number(process.env.DAILY_BASE_MONEY || 5_000),
+  developerUserIds: String(process.env.DEVELOPER_USER_IDS || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean),
   port: Number(process.env.PORT || 3000),
   keepAliveUrl: process.env.KEEP_ALIVE_URL || renderExternalUrl,
   keepAliveIntervalMs: Number(process.env.KEEP_ALIVE_INTERVAL_MS || 10 * 60_000),

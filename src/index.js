@@ -20,6 +20,7 @@ const mongoose = require('mongoose');
 const config = require('./config');
 const AlertSubscription = require('./models/AlertSubscription');
 const Ticket = require('./models/Ticket');
+const UserMoney = require('./models/UserMoney');
 const kraApi = require('./services/kraApi');
 const { ALERT_TYPES, checkTicketAlerts, startAlertWorker } = require('./services/alertService');
 const { startKeepAlive } = require('./services/keepAliveServer');
@@ -59,9 +60,42 @@ const CUSTOM_IDS = {
   alertCancelConfirmPrefix: 'alert:cancel:confirm:',
   alertCancelDismissPrefix: 'alert:cancel:dismiss:',
   horseInfoSelectPrefix: 'horseinfo:select:',
+  ticketConfirmPrefix: 'ticket:confirm:',
+  ticketCancelPrefix: 'ticket:cancel:',
 };
 
 const scheduleCache = new Map();
+
+function isDeveloper(userId) {
+  return config.developerUserIds.includes(String(userId));
+}
+
+function moneyText(amount) {
+  return `${Number(amount || 0).toLocaleString()}머니`;
+}
+
+function ticketConfirmationEmbed(ticket, nextRaceBetAmount) {
+  return new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('마권 발매 최종 확인')
+    .setDescription('확인을 누르면 베팅 금액이 차감되고 마권이 발매됩니다. 취소하면 발매되지 않습니다.')
+    .addFields(
+      { name: '경마장', value: ticket.meet, inline: true },
+      { name: '경주', value: `${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: true },
+      { name: '승식', value: ticket.betType, inline: true },
+      { name: '마번', value: ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`, inline: true },
+      { name: '베팅 금액', value: moneyText(ticket.amount), inline: true },
+      { name: '이 경주 누적 베팅', value: `${moneyText(nextRaceBetAmount)} / ${moneyText(config.maxRaceBetAmount)}`, inline: true },
+    )
+    .setTimestamp();
+}
+
+function ticketConfirmationRow(ticketId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.ticketConfirmPrefix}${ticketId}`).setLabel('확인').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.ticketCancelPrefix}${ticketId}`).setLabel('취소').setStyle(ButtonStyle.Secondary),
+  );
+}
 
 function getCommandData() {
   return [
@@ -76,8 +110,25 @@ function getCommandData() {
           ...config.MEETS.map((meet) => ({ name: meet.name, value: meet.code })),
         )),
     new SlashCommandBuilder()
+      .setName('가입')
+      .setDescription('머니 시스템에 가입하고 가입 보너스를 받습니다.'),
+    new SlashCommandBuilder()
+      .setName('데일리')
+      .setDescription('하루 한 번 데일리 머니를 받습니다.'),
+    new SlashCommandBuilder()
+      .setName('지갑')
+      .setDescription('현재 보유 머니를 확인합니다.'),
+    new SlashCommandBuilder()
+      .setName('리더보드')
+      .setDescription('보유 머니 순위를 확인합니다.')
+      .addStringOption((option) => option
+        .setName('범위')
+        .setDescription('서버 또는 전체 순위를 선택합니다.')
+        .setRequired(true)
+        .addChoices({ name: '서버', value: 'server' }, { name: '글로벌', value: 'global' })),
+    new SlashCommandBuilder()
       .setName('내마권')
-      .setDescription('지금까지 발매한 내 가상 마권 내역을 확인합니다.'),
+      .setDescription('지금까지 발매한 내 마권 내역을 확인합니다.'),
     new SlashCommandBuilder()
       .setName('경마일정')
       .setDescription('오늘부터 1주일 동안의 경마 일정을 확인합니다.')
@@ -288,8 +339,8 @@ function firstScheduleIndex(days) {
 
 function ticketStatusText(ticket) {
   if (ticket.status === 'pending' || ticket.status === 'checking') return '확인중';
-  if (ticket.status === 'won') return `적중 / 배당률 ${ticket.odds || 0} / **환급 ${Number(ticket.payout || 0).toLocaleString()}원**`;
-  if (ticket.status === 'lost') return `실패 / **${Number(ticket.amount || 0).toLocaleString()}원을 잃었습니다**`;
+  if (ticket.status === 'won') return `적중 / 배당률 ${ticket.odds || 0} / **환급 ${Number(ticket.payout || 0).toLocaleString()}머니**`;
+  if (ticket.status === 'lost') return `실패 / **${Number(ticket.amount || 0).toLocaleString()}머니를 잃었습니다**`;
   if (ticket.status === 'void') return '무효';
   return ticket.status;
 }
@@ -313,7 +364,7 @@ function formatTicketLine(ticket, index) {
   const statusEmoji = getStatusEmoji(ticket);
   return [
     `**${index}. ${ticket.meet} ${ticket.rcNo}R ${statusEmoji}** (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`,
-    `${ticket.betType} / ${horses} / **${Number(ticket.amount).toLocaleString()}원**`,
+    `${ticket.betType} / ${horses} / **${Number(ticket.amount).toLocaleString()}머니**`,
     `상태: ${ticketStatusText(ticket)}${result}`,
   ].join('\n');
 }
@@ -510,7 +561,7 @@ function createTicketModal(meetCode, races) {
     .addLabelComponents(
       new LabelBuilder()
         .setLabel('베팅 금액 입력')
-        .setDescription('베팅할 금액을 입력해주세요. 한 경주당 총 100,000원까지 추가 발매할 수 있습니다.')
+        .setDescription('베팅할 금액을 입력해주세요. 한 경주당 총 100,000머니까지 추가 발매할 수 있습니다.')
         .setTextInputComponent(
           new TextInputBuilder()
             .setCustomId(CUSTOM_IDS.amountInput)
@@ -555,7 +606,7 @@ async function sumUserRaceBetAmount(discordId, meetCode, rcDate, rcNo) {
         meetCode,
         rcDate,
         rcNo,
-        status: { $ne: 'void' },
+        status: { $in: ['pending', 'checking', 'won', 'lost'] },
       },
     },
     {
@@ -701,6 +752,14 @@ function buildHorseInfoEmbed(horse) {
 }
 
 async function handleTicketCommand(interaction) {
+  const account = await UserMoney.findOne({ discordId: interaction.user.id }).lean();
+  if (!account) {
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('가입이 필요합니다').setDescription('마권을 발매하려면 먼저 `/가입` 명령어를 실행해주세요.')],
+    });
+    return;
+  }
+
   const meetCode = interaction.options.getString('경마장', true);
   const meet = config.MEET_BY_CODE[meetCode];
 
@@ -727,12 +786,100 @@ async function handleTicketCommand(interaction) {
   if (races.length === 0) {
     await interaction.reply({
       content: `${meet.name} 경마장에 현재 베팅 가능한 경주가 없습니다. 오늘 경주가 없거나 발매 마감 시간이 지났습니다.`,
-      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   await interaction.showModal(createTicketModal(meetCode, races));
+}
+
+async function handleSignupCommand(interaction) {
+  const existing = await UserMoney.findOne({ discordId: interaction.user.id });
+  if (existing) {
+    if (interaction.guildId) await UserMoney.updateOne({ _id: existing._id }, { $addToSet: { guildIds: interaction.guildId }, $set: { username: interaction.user.username } });
+    await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x95a5a6).setTitle('이미 가입되어 있습니다').setDescription(`현재 보유 머니는 **${moneyText(existing.balance)}**입니다.`)]});
+    return;
+  }
+
+  try {
+    const account = await UserMoney.create({
+      discordId: interaction.user.id,
+      username: interaction.user.username,
+      balance: config.signupBonusMoney,
+      guildIds: interaction.guildId ? [interaction.guildId] : [],
+    });
+    await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('가입 완료').setDescription(`가입 기념으로 **${moneyText(config.signupBonusMoney)}**를 지급했습니다.`).addFields({ name: '현재 보유 머니', value: moneyText(account.balance) })]});
+  } catch (error) {
+    if (error.code !== 11000) throw error;
+    await interaction.reply({ content: '이미 가입되어 있습니다.'});
+  }
+}
+
+async function handleDailyCommand(interaction) {
+  const account = await UserMoney.findOne({ discordId: interaction.user.id }).lean();
+  if (!account) {
+    await interaction.reply({ content: '데일리 머니를 받으려면 먼저 `/가입` 명령어를 실행해주세요.'});
+    return;
+  }
+  const today = todayKST();
+  if (account.lastDailyDate === today) {
+    await interaction.reply({ content: '오늘의 데일리 머니는 이미 받았습니다. 다음 지급은 자정 이후입니다.'});
+    return;
+  }
+  const yesterday = nowKST().subtract(1, 'day').format('YYYYMMDD');
+  const streak = account.lastDailyDate === yesterday ? Math.min(Number(account.dailyStreak || 0) + 1, 5) : 1;
+  const bonusPercent = Math.min((streak - 1) * 10, 50);
+  const amount = Math.floor(config.dailyBaseMoney * (1 + bonusPercent / 100));
+  const updated = await UserMoney.findOneAndUpdate(
+    { _id: account._id, lastDailyDate: { $ne: today } },
+    { $inc: { balance: amount }, $set: { lastDailyDate: today, dailyStreak: streak, username: interaction.user.username } },
+    { new: true },
+  );
+  if (!updated) {
+    await interaction.reply({ content: '오늘의 데일리 머니는 이미 받았습니다. 다음 지급은 자정 이후입니다.',  });
+    return;
+  }
+  await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('데일리 지급 완료').setDescription(`**${moneyText(amount)}**를 지급했습니다. (연속 ${streak}일 · 보너스 ${bonusPercent}%)`).addFields({ name: '현재 보유 머니', value: moneyText(updated.balance) })]});
+}
+
+async function handleWalletCommand(interaction) {
+  const account = await UserMoney.findOne({ discordId: interaction.user.id }).lean();
+  if (!account) {
+    await interaction.reply({ content: '지갑을 사용하려면 먼저 `/가입` 명령어를 실행해주세요.'});
+    return;
+  }
+  await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x3498db).setTitle(`:coin: ${interaction.user.username}님의 지갑`).addFields({ name: '보유 머니', value: `**${moneyText(account.balance)}**` }, { name: '데일리 연속 출석', value: `${account.dailyStreak || 0}일`, inline: true })]});
+}
+
+async function handleLeaderboardCommand(interaction) {
+  const scope = interaction.options.getString('범위', true);
+  if (scope === 'server' && !interaction.guildId) {
+    await interaction.reply({ content: '서버 리더보드는 서버 안에서만 조회할 수 있습니다.'});
+    return;
+  }
+  const filter = scope === 'server' ? { guildIds: interaction.guildId } : {};
+  const users = await UserMoney.find(filter).sort({ balance: -1, createdAt: 1 }).limit(10).lean();
+  const description = users.length
+    ? users.map((user, index) => `**${index + 1}.** ${user.username} — ${moneyText(user.balance)}`).join('\n')
+    : '아직 가입한 유저가 없습니다.';
+  await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xf1c40f).setTitle(scope === 'server' ? '📊 서버 머니 리더보드' : '📊 글로벌 머니 리더보드').setDescription(description)] });
+}
+
+async function handleDeveloperMoneyCommand(message) {
+  if (!isDeveloper(message.author.id)) return;
+  const match = message.content.match(/^\.money\s+(add|deduct)\s+(\d{15,22})\s+(\d+)\s*$/i);
+  if (!match) return;
+  const [, operation, discordId, rawAmount] = match;
+  const amount = Number(rawAmount);
+  if (!Number.isSafeInteger(amount) || amount <= 0) return;
+  const update = operation.toLowerCase() === 'add'
+    ? { $inc: { balance: amount } }
+    : { $inc: { balance: -amount } };
+  const filter = operation.toLowerCase() === 'add' ? { discordId } : { discordId, balance: { $gte: amount } };
+  const account = await UserMoney.findOneAndUpdate(filter, update, { new: true });
+  await message.reply(account
+    ? `${account.username}님의 잔액을 ${operation.toLowerCase() === 'add' ? '증가' : '차감'}했습니다. 현재 잔액: ${moneyText(account.balance)}`
+    : '대상 유저가 가입하지 않았거나 차감할 머니가 부족합니다.');
 }
 
 async function handleMyTicketsCommand(interaction) {
@@ -1036,11 +1183,15 @@ async function handleTicketModal(interaction) {
 
   const amount = parseAmount(amountRaw);
   if (!amount || amount < 100 || amount > 100_000) {
-    errors.push('베팅 금액은 100원 이상 100,000원 이하의 숫자로 입력해주세요.');
+    errors.push('베팅 금액은 100머니 이상 100,000머니 이하의 숫자로 입력해주세요.');
   }
 
   const parsedHorses = parseHorseInput(horsesRaw);
   errors.push(...parsedHorses.formatErrors);
+
+  if (parsedHorses.isTest && !isDeveloper(interaction.user.id)) {
+    errors.push('베팅 금액은 100머니 이상 100,000머니 이하의 숫자로 입력해주세요.');
+  }
 
   const horseCountError = validateHorseCount(betType, parsedHorses.horses, parsedHorses.isTest);
   if (horseCountError) errors.push(horseCountError);
@@ -1093,11 +1244,23 @@ async function handleTicketModal(interaction) {
   if (nextRaceBetAmount > config.maxRaceBetAmount) {
     const remainingAmount = Math.max(config.maxRaceBetAmount - currentRaceBetAmount, 0);
     await interaction.editReply(
-      `${meet.name} ${rcNo}경주에 이미 ${currentRaceBetAmount.toLocaleString()}원을 베팅했습니다. `
-      + `한 경주당 베팅 한도는 ${config.maxRaceBetAmount.toLocaleString()}원이므로 `
-      + `추가 발매 가능 금액은 ${remainingAmount.toLocaleString()}원입니다.`,
+      `${meet.name} ${rcNo}경주에 이미 ${currentRaceBetAmount.toLocaleString()}머니를 베팅했습니다. `
+      + `한 경주당 베팅 한도는 ${config.maxRaceBetAmount.toLocaleString()}머니이므로 `
+      + `추가 발매 가능 금액은 ${remainingAmount.toLocaleString()}머니입니다.`,
     );
     return;
+  }
+
+  if (!parsedHorses.isTest) {
+    const account = await UserMoney.findOne({ discordId: interaction.user.id }).lean();
+    if (!account) {
+      await interaction.editReply('마권을 발매하려면 먼저 `/가입` 명령어를 실행해주세요.');
+      return;
+    }
+    if (account.balance < amount) {
+      await interaction.editReply(`보유 머니가 부족합니다. 현재 보유 머니는 ${moneyText(account.balance)}입니다.`);
+      return;
+    }
   }
 
   const ticket = await Ticket.create({
@@ -1115,7 +1278,14 @@ async function handleTicketModal(interaction) {
     amount,
     dusu,
     isTest: parsedHorses.isTest,
+    status: 'draft',
   });
+  await interaction.editReply({
+    embeds: [ticketConfirmationEmbed(ticket, nextRaceBetAmount)],
+    components: [ticketConfirmationRow(ticket.id)],
+  });
+  return;
+
   checkTicketAlerts(interaction.client, ticket).catch((error) => {
     console.error('[ticket alert check]', error);
   });
@@ -1123,22 +1293,96 @@ async function handleTicketModal(interaction) {
   const embed = new EmbedBuilder()
     .setColor(0x3d8af7)
     .setTitle('마권 발매 완료')
-    .setDescription('같은 경주에 10만원까지 추가 발매할 수 있습니다. 경주 출발 5분 후부터 결과를 확인해 DM으로 알려드립니다.')
+    .setDescription('같은 경주에 10만머니까지 추가 발매할 수 있습니다. 경주 출발 5분 후부터 결과를 확인해 DM으로 알려드립니다.')
     .addFields(
       { name: '경마장', value: ticket.meet, inline: true },
       { name: '경주', value: `${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: true },
       { name: '승식', value: ticket.betType, inline: true },
       { name: '마번', value: ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`, inline: true },
-      { name: '베팅 금액', value: `${ticket.amount.toLocaleString()}원`, inline: true },
-      { name: '이 경주 누적 베팅', value: `${nextRaceBetAmount.toLocaleString()}원 / ${config.maxRaceBetAmount.toLocaleString()}원`, inline: true },
+      { name: '베팅 금액', value: `${ticket.amount.toLocaleString()}머니`, inline: true },
+      { name: '이 경주 누적 베팅', value: `${nextRaceBetAmount.toLocaleString()}머니 / ${config.maxRaceBetAmount.toLocaleString()}머니`, inline: true },
     )
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
 }
 
+async function handleTicketConfirmation(interaction, confirmed) {
+  const prefix = confirmed ? CUSTOM_IDS.ticketConfirmPrefix : CUSTOM_IDS.ticketCancelPrefix;
+  const ticketId = interaction.customId.slice(prefix.length);
+  const ticket = await Ticket.findOne({ _id: ticketId, discordId: interaction.user.id, status: 'draft' });
+  if (!ticket) {
+    await interaction.reply({ content: '이미 처리되었거나 만료된 발매 확인입니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (!confirmed) {
+    await Ticket.deleteOne({ _id: ticket._id, status: 'draft' });
+    await interaction.update({ content: '마권 발매를 취소했습니다.', embeds: [], components: [] });
+    return;
+  }
+  if (isPastTicketClose(ticket.rcDate, ticket.schStTime, config.ticketCloseBeforeStartMinutes)) {
+    await Ticket.deleteOne({ _id: ticket._id, status: 'draft' });
+    await interaction.update({ content: '발매 마감 시간이 지나 마권을 발매할 수 없습니다.', embeds: [], components: [] });
+    return;
+  }
+  const lockedTicket = await Ticket.findOneAndUpdate(
+    { _id: ticket._id, discordId: interaction.user.id, status: 'draft' },
+    { $set: { status: 'checking' } },
+    { new: true },
+  );
+  if (!lockedTicket) {
+    await interaction.reply({ content: '이미 처리된 발매 확인입니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const existingAmount = (await sumUserRaceBetAmount(ticket.discordId, ticket.meetCode, ticket.rcDate, ticket.rcNo)) - ticket.amount;
+  if (existingAmount + ticket.amount > config.maxRaceBetAmount) {
+    await Ticket.updateOne({ _id: ticket._id, status: 'checking' }, { $set: { status: 'draft' } });
+    await interaction.update({ content: '같은 경주의 베팅 한도를 초과하여 발매할 수 없습니다.', embeds: [], components: [ticketConfirmationRow(ticket.id)] });
+    return;
+  }
+  let account = null;
+  if (!ticket.isTest) {
+    account = await UserMoney.findOneAndUpdate(
+      { discordId: ticket.discordId, balance: { $gte: ticket.amount } },
+      { $inc: { balance: -ticket.amount }, $set: { username: interaction.user.username } },
+      { new: true },
+    );
+    if (!account) {
+      await Ticket.updateOne({ _id: ticket._id, status: 'checking' }, { $set: { status: 'draft' } });
+      await interaction.update({ content: '보유 머니가 부족하여 발매할 수 없습니다.', embeds: [], components: [ticketConfirmationRow(ticket.id)] });
+      return;
+    }
+  }
+  const issued = await Ticket.findOneAndUpdate({ _id: ticket._id, status: 'checking' }, { $set: { status: 'pending' } }, { new: true });
+  if (!issued) {
+    if (account) await UserMoney.updateOne({ discordId: ticket.discordId }, { $inc: { balance: ticket.amount } });
+    throw new Error('마권 발매 상태를 확정하지 못했습니다.');
+  }
+  checkTicketAlerts(interaction.client, issued).catch((error) => console.error('[ticket alert check]', error));
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('마권 발매 완료').setDescription(ticket.isTest ? '테스트 마권이 발매되었습니다. 머니에는 영향을 주지 않습니다.' : `마권이 발매되어 ${moneyText(ticket.amount)}가 차감되었습니다.`).addFields({ name: '현재 보유 머니', value: ticket.isTest ? '변동 없음' : moneyText(account.balance) })],
+    components: [],
+  });
+}
+
 async function onInteractionCreate(interaction) {
   try {
+    if (interaction.isChatInputCommand() && interaction.commandName === '가입') {
+      await handleSignupCommand(interaction);
+      return;
+    }
+    if (interaction.isChatInputCommand() && interaction.commandName === '데일리') {
+      await handleDailyCommand(interaction);
+      return;
+    }
+    if (interaction.isChatInputCommand() && interaction.commandName === '지갑') {
+      await handleWalletCommand(interaction);
+      return;
+    }
+    if (interaction.isChatInputCommand() && interaction.commandName === '리더보드') {
+      await handleLeaderboardCommand(interaction);
+      return;
+    }
     if (interaction.isChatInputCommand() && interaction.commandName === '마권발매') {
       await handleTicketCommand(interaction);
       return;
@@ -1166,6 +1410,14 @@ async function onInteractionCreate(interaction) {
 
     if (interaction.isChatInputCommand() && interaction.commandName === '말정보') {
       await handleHorseInfoCommand(interaction);
+      return;
+    }
+
+    if (interaction.isButton() && (
+      interaction.customId.startsWith(CUSTOM_IDS.ticketConfirmPrefix)
+      || interaction.customId.startsWith(CUSTOM_IDS.ticketCancelPrefix)
+    )) {
+      await handleTicketConfirmation(interaction, interaction.customId.startsWith(CUSTOM_IDS.ticketConfirmPrefix));
       return;
     }
 
@@ -1232,6 +1484,7 @@ async function ensureDatabaseIndexes() {
   }
 
   await Ticket.createIndexes();
+  await UserMoney.createIndexes();
   await AlertSubscription.createIndexes();
 }
 
@@ -1253,7 +1506,7 @@ async function main() {
   await ensureDatabaseIndexes();
 
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   });
 
   client.once('clientReady', () => {
@@ -1264,6 +1517,9 @@ async function main() {
   });
 
   client.on('interactionCreate', onInteractionCreate);
+  client.on('messageCreate', (message) => {
+    if (!message.author.bot) handleDeveloperMoneyCommand(message).catch((error) => console.error('[developer money]', error));
+  });
 
   await client.login(config.discordToken);
 }

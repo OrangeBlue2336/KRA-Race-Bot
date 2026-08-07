@@ -21,12 +21,13 @@ const ticketSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['pending', 'checking', 'won', 'lost', 'void'],
+      enum: ['draft', 'pending', 'checking', 'won', 'lost', 'void'],
       default: 'pending',
       index: true,
     },
     odds: { type: Number, default: 0 },
     payout: { type: Number, default: 0 },
+    moneyRewarded: { type: Boolean, default: false },
     resultTop3: [
       {
         ord: Number,
@@ -47,6 +48,8 @@ const ticketSchema = new mongoose.Schema(
 );
 
 ticketSchema.index({ discordId: 1, meetCode: 1, rcDate: 1, rcNo: 1, status: 1 });
+
+ticketSchema.index({ status: 1, createdAt: 1 });
 
 ticketSchema.index(
   { settledAt: 1 },

@@ -1,5 +1,6 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const Ticket = require('../models/Ticket');
+const UserMoney = require('../models/UserMoney');
 const kraApi = require('./kraApi');
 const { evaluateTicket } = require('../utils/betting');
 const { canCheckRaceResult, formatRaceDate, formatRaceTime } = require('../utils/time');
@@ -80,28 +81,32 @@ function formatTop3(top3) {
     .join('\n');
 }
 
-function buildResultEmbed(ticket, evaluation, top3) {
+function buildResultEmbed(ticket, evaluation, top3, balance) {
   const selected = ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`;
   const odds = Number(evaluation.odds || 0);
-  const payout = evaluation.won ? Math.floor(ticket.amount * odds) : 0;
+  const payout = !ticket.isTest && evaluation.won ? Math.floor(ticket.amount * odds) : 0;
 
   const embed = new EmbedBuilder()
     .setColor(evaluation.won ? 0x2ecc71 : 0xe74c3c)
     .setTitle(evaluation.won ? '💵 마권 적중!' : '💸 마권 적중 실패')
     .setDescription(
       evaluation.won
-        ? `${ticket.amount.toLocaleString()}원 x 배당률 ${odds || 1} = **${payout.toLocaleString()}원 환급**입니다.`
-        : `**${ticket.amount.toLocaleString()}원**을 잃었습니다!`,
+        ? `${ticket.amount.toLocaleString()}머니 x 배당률 ${odds || 1} = **${payout.toLocaleString()}머니 환급**입니다.`
+        : `**${ticket.amount.toLocaleString()}머니**을 잃었습니다!`,
     )
     .addFields(
       { name: '경주', value: `${ticket.meet} ${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: false },
-      { name: '베팅', value: `${ticket.betType} / ${selected} / ${ticket.amount.toLocaleString()}원`, inline: false },
+      { name: '베팅', value: `${ticket.betType} / ${selected} / ${ticket.amount.toLocaleString()}머니`, inline: false },
       { name: '실제 1, 2, 3착', value: formatTop3(top3), inline: false },
     )
     .setTimestamp();
 
   if (evaluation.note) {
     embed.addFields({ name: '참고', value: evaluation.note, inline: false });
+  }
+
+  if (Number.isFinite(balance)) {
+    embed.addFields({ name: '현재 보유 머니', value: `${balance.toLocaleString()}머니`, inline: false });
   }
 
   return {
@@ -111,8 +116,8 @@ function buildResultEmbed(ticket, evaluation, top3) {
   };
 }
 
-async function notifyUser(client, ticket, evaluation, top3) {
-  const { embed, payout, odds } = buildResultEmbed(ticket, evaluation, top3);
+async function notifyUser(client, ticket, evaluation, top3, balance) {
+  const { embed, payout, odds } = buildResultEmbed(ticket, evaluation, top3, balance);
   const user = await client.users.fetch(ticket.discordId);
 
   const vodUrl = buildVodUrl(ticket.meetCode, ticket.rcDate, ticket.rcNo);
@@ -168,10 +173,10 @@ async function settleTicket(client, ticket) {
     }
 
     const evaluation = evaluateTicket(lockedTicket, top3, settlementSummary || {});
-    const { payout, odds } = await notifyUser(client, lockedTicket, evaluation, top3);
-
-    await Ticket.updateOne(
-      { _id: lockedTicket._id },
+    const odds = Number(evaluation.odds || 0);
+    const payout = !lockedTicket.isTest && evaluation.won ? Math.floor(lockedTicket.amount * odds) : 0;
+    const settledTicket = await Ticket.findOneAndUpdate(
+      { _id: lockedTicket._id, status: 'checking' },
       {
         $set: {
           status: evaluation.won ? 'won' : 'lost',
@@ -182,10 +187,23 @@ async function settleTicket(client, ticket) {
           settlementError: '',
         },
       },
+      { new: true },
     );
+    if (!settledTicket) return;
+
+    let account = await UserMoney.findOne({ discordId: lockedTicket.discordId });
+    if (!lockedTicket.isTest && evaluation.won && payout > 0) {
+      account = await UserMoney.findOneAndUpdate(
+        { discordId: lockedTicket.discordId },
+        { $inc: { balance: payout } },
+        { new: true },
+      );
+      await Ticket.updateOne({ _id: lockedTicket._id }, { $set: { moneyRewarded: true } });
+    }
+    await notifyUser(client, lockedTicket, evaluation, top3, account ? Number(account.balance) : undefined);
   } catch (error) {
     await Ticket.updateOne(
-      { _id: lockedTicket._id },
+      { _id: lockedTicket._id, status: 'checking' },
       {
         $set: {
           status: 'pending',
