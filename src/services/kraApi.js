@@ -12,6 +12,10 @@ const ENDPOINTS = {
   jockeyChangeDetail: '/API300/Jockey_Change_Detail',
   raceHorseCancelInfo: '/API9_1/raceHorseCancelInfo_1',
   totalHorseInfo: '/API42_1/totalHorseInfo_1',
+  trainerInfo: '/API19_1/trainerInfo_1',
+  jockeyResult: '/API11_1/jockeyResult_1',
+  entryHorseWeightInfo: '/API25_1/entryHorseWeightInfo_1',
+  trackInfo: '/API189_1/Track_1',
 };
 
 const xmlParser = new XMLParser({
@@ -195,6 +199,38 @@ async function getHorseInfoByNo(hrNo) {
   return items.map(normalizeNumberFields).find((item) => String(item.hrNo) === String(hrNo)) || null;
 }
 
+async function getTrainerInfo(meet, trNo) {
+  const items = await requestKra(ENDPOINTS.trainerInfo, { meet, tr_no: trNo, numOfRows: 10 });
+  return items.map(normalizeNumberFields).find((item) => String(item.trNo) === String(trNo)) || null;
+}
+
+async function getJockeyResult(meet, jkNo) {
+  const items = await requestKra(ENDPOINTS.jockeyResult, { meet, jk_no: jkNo, numOfRows: 10 });
+  return items.map(normalizeNumberFields).find((item) => String(item.jkNo) === String(jkNo)) || null;
+}
+
+async function getEntryHorseWeightInfo(meet, rcDate, hrNo) {
+  const items = await requestKra(ENDPOINTS.entryHorseWeightInfo, {
+    meet,
+    hr_no: hrNo,
+    rc_date: rcDate,
+    numOfRows: 100,
+  });
+  return items.map(normalizeNumberFields).find((item) => String(item.hrNo) === String(hrNo) && Number(item.rcDate) === Number(rcDate)) || null;
+}
+
+async function getTrackInfo(meet, rcDate, rcNo) {
+  const items = await requestKra(ENDPOINTS.trackInfo, {
+    meet,
+    rc_date_fr: rcDate,
+    rc_date_to: rcDate,
+    numOfRows: 100,
+  });
+  return items
+    .map(normalizeNumberFields)
+    .find((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo)) || null;
+}
+
 module.exports = {
   getRaceSchedule,
   getEntryInfo,
@@ -205,4 +241,8 @@ module.exports = {
   getRaceHorseCancels,
   searchHorseInfoByName,
   getHorseInfoByNo,
+  getTrainerInfo,
+  getJockeyResult,
+  getEntryHorseWeightInfo,
+  getTrackInfo,
 };

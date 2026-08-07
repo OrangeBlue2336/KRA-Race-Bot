@@ -92,7 +92,7 @@ function buildResultEmbed(ticket, evaluation, top3, balance) {
     .setDescription(
       evaluation.won
         ? `${ticket.amount.toLocaleString()}머니 x 배당률 ${odds || 1} = **${payout.toLocaleString()}머니 환급**입니다.`
-        : `**${ticket.amount.toLocaleString()}머니**을 잃었습니다!`,
+        : `**${ticket.amount.toLocaleString()}머니**를 잃었습니다!`,
     )
     .addFields(
       { name: '경주', value: `${ticket.meet} ${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: false },

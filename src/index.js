@@ -60,6 +60,9 @@ const CUSTOM_IDS = {
   alertCancelConfirmPrefix: 'alert:cancel:confirm:',
   alertCancelDismissPrefix: 'alert:cancel:dismiss:',
   horseInfoSelectPrefix: 'horseinfo:select:',
+  raceAnalysisSelectPrefix: 'raceanalysis:select:',
+  raceAnalysisPrevPrefix: 'raceanalysis:prev:',
+  raceAnalysisNextPrefix: 'raceanalysis:next:',
   ticketConfirmPrefix: 'ticket:confirm:',
   ticketCancelPrefix: 'ticket:cancel:',
 };
@@ -141,7 +144,7 @@ function getCommandData() {
         )),
     new SlashCommandBuilder()
       .setName('경주정보')
-      .setDescription('지정한 경주의 출전마 정보를 확인합니다.')
+      .setDescription('지정한 경주의 출전마 정보 및 분석 자료를 확인합니다.')
       .addStringOption((option) => option
         .setName('경마장')
         .setDescription('출전표를 확인할 경마장을 선택합니다.')
@@ -474,6 +477,87 @@ function buildRaceInfoEmbed(meet, rcDate, rcNo, entries, cancels) {
     )
     .setFooter({ text: '🚫 표시는 출전 취소된 말입니다.' })
     .setTimestamp();
+}
+
+function formatTrackCondition(trackInfo) {
+  if (!trackInfo) return '주로 정보 없음';
+  return `날씨: ${cleanValue(trackInfo.weather)} · 경주로 상태: ${cleanValue(trackInfo.track)} · 함수율: ${cleanValue(trackInfo.waterPercent)}%`;
+}
+
+function raceAnalysisContext(userId, meetCode, rcDate, rcNo, index) {
+  return `${userId}|${meetCode}|${rcDate}|${rcNo}|${index}`;
+}
+
+function parseRaceAnalysisContext(value) {
+  const [userId, meetCode, rcDate, rcNo, index] = String(value).split('|');
+  return { userId, meetCode, rcDate, rcNo: Number(rcNo), index: Number(index) };
+}
+
+function raceAnalysisComponents(entries, context) {
+  const { userId, meetCode, rcDate, rcNo, index } = context;
+  const makeContext = (nextIndex) => raceAnalysisContext(userId, meetCode, rcDate, rcNo, nextIndex);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`${CUSTOM_IDS.raceAnalysisSelectPrefix}${makeContext(index)}`)
+    .setPlaceholder('경주마 분석: 출전마를 선택하세요')
+    .addOptions(entries.slice(0, 25).map((entry) => (
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${entry.chulNo}번 ${entryHorseName(entry)}`.slice(0, 100))
+        .setValue(String(entry.hrNo))
+        .setDefault(entries[index] && String(entries[index].hrNo) === String(entry.hrNo))
+    )));
+  return [
+    new ActionRowBuilder().addComponents(menu),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`${CUSTOM_IDS.raceAnalysisPrevPrefix}${makeContext(Math.max(index - 1, 0))}`).setLabel('◀ 이전 말').setStyle(ButtonStyle.Secondary).setDisabled(index <= 0),
+      new ButtonBuilder().setCustomId(`${CUSTOM_IDS.raceAnalysisNextPrefix}${makeContext(Math.min(index + 1, entries.length - 1))}`).setLabel('다음 말 ▶').setStyle(ButtonStyle.Secondary).setDisabled(index >= entries.length - 1),
+    ),
+  ];
+}
+
+function percentage(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number}%` : '미상';
+}
+
+function buildRaceAnalysisEmbed(meet, rcDate, rcNo, entry, horse, jockey, trainer, weight, trackInfo) {
+  const weightValue = Number(weight?.wgHr);
+  const difference = Number(weight?.wgHrDiff);
+  const bodyWeight = Number.isFinite(weightValue) && weightValue > 0 ? `${weightValue}kg` : '미상';
+  const weightDiff = Number.isFinite(difference) ? `${difference > 0 ? '+' : ''}${difference}kg` : '미상';
+  const career = [
+    `통산 ${cleanValue(horse?.rcCnt)}전 ${cleanValue(horse?.fstCnt)}승 / 2착 ${cleanValue(horse?.sndCnt)}회 / 3착 ${cleanValue(horse?.trdCnt)}회`,
+    `승률 ${percentage(horse?.winRate)} / 복승률 ${percentage(horse?.quinRate)}`,
+    `통산 상금 ${formatMoney(horse?.amt)}`,
+  ];
+  return new EmbedBuilder()
+    .setColor(0x8e44ad)
+    .setTitle(`🏇 ${entry.chulNo}번 ${entryHorseName(entry)} 분석`)
+    .setDescription(`${meet.name} ${rcNo}경주 · ${formatRaceDate(rcDate)} · ${cleanValue(entry.sex)} ${cleanValue(entry.age)}세`)
+    .addFields(
+      { name: '마필 통산 성적', value: compactLines(career), inline: false },
+      { name: '기수 정보', value: compactLines([`${entryJockeyName(entry)} (${cleanValue(entry.jkNo)})`, `최근 1년: ${cleanValue(jockey?.rcCntY)}전 ${cleanValue(jockey?.ord1CntY)}승 · 승률 ${percentage(jockey?.winRateY)}`]), inline: true },
+      { name: '조교사 정보', value: compactLines([`${cleanValue(entry.trName || entry.trNm)} (${cleanValue(entry.trNo)})`, `최근 1년: ${cleanValue(trainer?.rcCntY)}전 ${cleanValue(trainer?.ord1CntY)}승 · 승률 ${percentage(trainer?.winRateY)}`]), inline: true },
+      { name: '마체중', value: `${bodyWeight} (직전 대비 ${weightDiff})`, inline: true },
+    )
+    .setFooter({ text: formatTrackCondition(trackInfo) })
+    .setTimestamp();
+}
+
+async function buildRaceAnalysisMessage(context) {
+  const meet = config.MEET_BY_CODE[context.meetCode];
+  const entries = await kraApi.getEntryInfo(meet.apiMeet, context.rcDate, context.rcNo);
+  const index = Math.min(Math.max(context.index, 0), entries.length - 1);
+  const entry = entries[index];
+  if (!entry) return { content: '출전마 정보를 다시 조회하지 못했습니다.', embeds: [], components: [] };
+  const [horse, jockey, trainer, weight, trackInfo] = await Promise.all([
+    kraApi.getHorseInfoByNo(entry.hrNo),
+    kraApi.getJockeyResult(meet.apiMeet, entry.jkNo),
+    kraApi.getTrainerInfo(meet.apiMeet, entry.trNo),
+    kraApi.getEntryHorseWeightInfo(meet.apiMeet, context.rcDate, entry.hrNo),
+    kraApi.getTrackInfo(meet.apiMeet, context.rcDate, context.rcNo),
+  ]);
+  const normalizedContext = { ...context, index };
+  return { embeds: [buildRaceAnalysisEmbed(meet, context.rcDate, context.rcNo, entry, horse, jockey, trainer, weight, trackInfo)], components: raceAnalysisComponents(entries, normalizedContext) };
 }
 
 function availableRacesFor(meetCode) {
@@ -947,9 +1031,10 @@ async function handleRaceInfoCommand(interaction) {
     return;
   }
 
-  const [entries, cancels] = await Promise.all([
+  const [entries, cancels, trackInfo] = await Promise.all([
     kraApi.getEntryInfo(meet.apiMeet, rcDate, rcNo),
     kraApi.getRaceHorseCancels(meet.apiMeet, rcDate, rcNo),
+    kraApi.getTrackInfo(meet.apiMeet, rcDate, rcNo),
   ]);
 
   if (entries.length === 0) {
@@ -957,9 +1042,10 @@ async function handleRaceInfoCommand(interaction) {
     return;
   }
 
-  await interaction.editReply({
-    embeds: [buildRaceInfoEmbed(meet, rcDate, rcNo, entries, cancels)],
-  });
+  const embed = buildRaceInfoEmbed(meet, rcDate, rcNo, entries, cancels);
+  embed.addFields({ name: '주로 상태', value: formatTrackCondition(trackInfo), inline: false });
+  const context = { userId: interaction.user.id, meetCode, rcDate, rcNo, index: 0 };
+  await interaction.editReply({ embeds: [embed], components: raceAnalysisComponents(entries, context) });
 }
 
 async function handleAlertSubscribeCommand(interaction) {
@@ -1190,7 +1276,7 @@ async function handleTicketModal(interaction) {
   errors.push(...parsedHorses.formatErrors);
 
   if (parsedHorses.isTest && !isDeveloper(interaction.user.id)) {
-    errors.push('베팅 금액은 100머니 이상 100,000머니 이하의 숫자로 입력해주세요.');
+    errors.push('test 마권은 개발자만 발매할 수 있습니다.');
   }
 
   const horseCountError = validateHorseCount(betType, parsedHorses.horses, parsedHorses.isTest);
@@ -1365,6 +1451,31 @@ async function handleTicketConfirmation(interaction, confirmed) {
   });
 }
 
+async function handleRaceAnalysisInteraction(interaction) {
+  const prefix = interaction.isStringSelectMenu()
+    ? CUSTOM_IDS.raceAnalysisSelectPrefix
+    : interaction.customId.startsWith(CUSTOM_IDS.raceAnalysisPrevPrefix)
+      ? CUSTOM_IDS.raceAnalysisPrevPrefix
+      : CUSTOM_IDS.raceAnalysisNextPrefix;
+  const context = parseRaceAnalysisContext(interaction.customId.slice(prefix.length));
+  if (context.userId !== interaction.user.id) {
+    await interaction.reply({ content: '이 경주 분석은 명령어를 실행한 사용자만 조작할 수 있습니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (interaction.isStringSelectMenu()) {
+    const meet = config.MEET_BY_CODE[context.meetCode];
+    const entries = await kraApi.getEntryInfo(meet.apiMeet, context.rcDate, context.rcNo);
+    const selectedIndex = entries.findIndex((entry) => String(entry.hrNo) === String(interaction.values[0]));
+    if (selectedIndex === -1) {
+      await interaction.reply({ content: '선택한 출전마 정보를 다시 조회하지 못했습니다.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+    context.index = selectedIndex;
+  }
+  await interaction.deferUpdate();
+  await interaction.editReply(await buildRaceAnalysisMessage(context));
+}
+
 async function onInteractionCreate(interaction) {
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === '가입') {
@@ -1414,6 +1525,14 @@ async function onInteractionCreate(interaction) {
     }
 
     if (interaction.isButton() && (
+      interaction.customId.startsWith(CUSTOM_IDS.raceAnalysisPrevPrefix)
+      || interaction.customId.startsWith(CUSTOM_IDS.raceAnalysisNextPrefix)
+    )) {
+      await handleRaceAnalysisInteraction(interaction);
+      return;
+    }
+
+    if (interaction.isButton() && (
       interaction.customId.startsWith(CUSTOM_IDS.ticketConfirmPrefix)
       || interaction.customId.startsWith(CUSTOM_IDS.ticketCancelPrefix)
     )) {
@@ -1452,6 +1571,11 @@ async function onInteractionCreate(interaction) {
 
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith(CUSTOM_IDS.horseInfoSelectPrefix)) {
       await handleHorseInfoSelect(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(CUSTOM_IDS.raceAnalysisSelectPrefix)) {
+      await handleRaceAnalysisInteraction(interaction);
       return;
     }
 
