@@ -44,7 +44,7 @@ const {
 const dayjs = require('dayjs');
 
 const RESPONSIBLE_GAMBLING_STATUS = '도박 중독 상담은 국번 없이 1336';
-const PRESENCE_UPDATE_INTERVAL_MS = 15_000;
+const PRESENCE_UPDATE_INTERVAL_MS = 30_000;
 
 const CUSTOM_IDS = {
   meetSelect: 'ticket:meet',
