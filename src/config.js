@@ -79,6 +79,9 @@ module.exports = {
   maxRaceBetAmount: Number(process.env.MAX_RACE_BET_AMOUNT || 100_000),
   signupBonusMoney: Number(process.env.SIGNUP_BONUS_MONEY || 100_000),
   dailyBaseMoney: Number(process.env.DAILY_BASE_MONEY || 5_000),
+  gambleWinChance: Number(process.env.GAMBLE_WIN_CHANCE || 0.5),
+  gambleMinAmount: Number(process.env.GAMBLE_MIN_AMOUNT || 1),
+  gambleCooldownSeconds: Number(process.env.GAMBLE_COOLDOWN_SECONDS || 3),
   developerUserIds: String(process.env.DEVELOPER_USER_IDS || '')
     .split(',')
     .map((id) => id.trim())
