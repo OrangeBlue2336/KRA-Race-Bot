@@ -2041,6 +2041,9 @@ if (require.main === module) {
   });
 }
 
+const serverList = client.guilds.cache.map(guild => guild.name).join('\n');
+console.log(`Connected to:\n${serverList}`);
+
 module.exports = {
   getCommandData,
   handleTicketCommand,
