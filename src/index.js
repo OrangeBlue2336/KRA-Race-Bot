@@ -2012,11 +2012,7 @@ async function main() {
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   });
-
-const client = new Client({ 
-    intents: [GatewayIntentBits.Guilds] 
-});
-
+  
   client.once('clientReady', () => {
     console.log(`${client.user.tag} 로그인 완료`);
     startRacePresenceWorker(client);
