@@ -2013,11 +2013,21 @@ async function main() {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   });
 
+const client = new Client({ 
+    intents: [GatewayIntentBits.Guilds] 
+});
+
   client.once('clientReady', () => {
     console.log(`${client.user.tag} 로그인 완료`);
     startRacePresenceWorker(client);
     startSettlementWorker(client);
     startAlertWorker(client);
+    console.log(`Logged in as ${client.user.tag}!`);
+    console.log('Currently in these servers:');
+    
+    client.guilds.cache.forEach(guild => {
+        console.log(`- ${guild.name} (${guild.id})`);
+    });
   });
 
   client.on('interactionCreate', onInteractionCreate);
@@ -2041,8 +2051,6 @@ if (require.main === module) {
   });
 }
 
-const serverList = client.guilds.cache.map(guild => guild.name).join('\n');
-console.log(`Connected to:\n${serverList}`);
 
 module.exports = {
   getCommandData,
