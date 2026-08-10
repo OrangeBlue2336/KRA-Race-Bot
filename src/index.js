@@ -39,13 +39,11 @@ const {
   isPastTicketClose,
   normalizeRaceTime,
   nowKST,
-  raceStartAtKST,
   todayKST,
 } = require('./utils/time');
 const dayjs = require('dayjs');
 
-const RESPONSIBLE_GAMBLING_STATUS = '도박 중독 상담은 국번 없이 1336';
-const PRESENCE_UPDATE_INTERVAL_MS = 30_000;
+const RESPONSIBLE_GAMBLING_STATUS = '도박 상담 문의는 국번 없이 1336';
 
 const CUSTOM_IDS = {
   meetSelect: 'ticket:meet',
@@ -582,83 +580,11 @@ async function warmScheduleCache() {
   await Promise.allSettled(config.MEETS.map(loadSchedule));
 }
 
-function getNextPresenceRaces(races, meetOrder = []) {
-  const now = nowKST();
-  const futureRaces = races
-    .map((race) => ({
-      ...race,
-      closeAt: raceStartAtKST(race.rcDate, race.schStTime)
-        .subtract(config.ticketCloseBeforeStartMinutes, 'minute'),
-    }))
-    .filter((race) => race.closeAt.isAfter(now))
-    .sort((a, b) => {
-      const closeDiff = a.closeAt.valueOf() - b.closeAt.valueOf();
-      if (closeDiff !== 0) return closeDiff;
-      return Number(a.rcNo) - Number(b.rcNo);
-    });
-
-  const nextByMeet = new Map();
-  futureRaces.forEach((race) => {
-    if (!nextByMeet.has(race.meetCode)) {
-      nextByMeet.set(race.meetCode, race);
-    }
+function setResponsibleGamblingPresence(client) {
+  client.user.setPresence({
+    activities: [{ name: RESPONSIBLE_GAMBLING_STATUS, type: ActivityType.Watching }],
+    status: 'online',
   });
-
-  const orderedRaces = meetOrder
-    .filter((meetCode) => nextByMeet.has(meetCode))
-    .map((meetCode) => nextByMeet.get(meetCode));
-  const newRaces = [...nextByMeet.values()]
-    .filter((race) => !meetOrder.includes(race.meetCode));
-
-  return [...orderedRaces, ...newRaces];
-}
-
-function formatRacePresenceMessage(race) {
-  return `${race.meetName} ${Number(race.rcNo)}R ${race.closeAt.format('HH:mm')} 발매 마감`;
-}
-
-async function loadTodayPresenceRaces() {
-  const rcDate = todayKST();
-  const results = await Promise.allSettled(config.MEETS.map((meet) => loadDaySchedule(meet, rcDate)));
-  const rejected = results.filter((result) => result.status === 'rejected');
-  if (rejected.length > 0) {
-    rejected.forEach((result) => console.error('[presence]', result.reason));
-  }
-
-  return results
-    .filter((result) => result.status === 'fulfilled')
-    .flatMap((result) => result.value);
-}
-
-function startRacePresenceWorker(client) {
-  let lastPresenceMessage = '';
-  let meetOrder = [];
-  let presenceIndex = 0;
-
-  const updatePresence = async () => {
-    const races = await loadTodayPresenceRaces();
-    const candidates = getNextPresenceRaces(races, meetOrder);
-    meetOrder = candidates.map((race) => race.meetCode);
-
-    if (presenceIndex >= candidates.length) {
-      presenceIndex = 0;
-    }
-
-    const message = candidates.length > 0
-      ? formatRacePresenceMessage(candidates[presenceIndex])
-      : RESPONSIBLE_GAMBLING_STATUS;
-    if (message === lastPresenceMessage) return;
-
-    client.user.setPresence({
-      activities: [{ name: message, type: ActivityType.Watching }],
-      status: 'online',
-    });
-    lastPresenceMessage = message;
-    presenceIndex = candidates.length > 0 ? (presenceIndex + 1) % candidates.length : 0;
-  };
-
-  updatePresence().catch((error) => console.error('[presence]', error));
-  return setInterval(() => updatePresence().catch((error) => console.error('[presence]', error)), PRESENCE_UPDATE_INTERVAL_MS);
 }
 
 function weekDatesFromToday() {
@@ -2015,7 +1941,7 @@ async function main() {
 
   client.once('clientReady', () => {
     console.log(`${client.user.tag} 로그인 완료`);
-    startRacePresenceWorker(client);
+    setResponsibleGamblingPresence(client);
     startSettlementWorker(client);
     startAlertWorker(client);
   });
@@ -2053,7 +1979,5 @@ module.exports = {
   handleMeetSelect,
   handleTicketModal,
   handleBlackjackCommand,
-  getNextPresenceRaces,
-  formatRacePresenceMessage,
-  startRacePresenceWorker,
+  setResponsibleGamblingPresence,
 };
