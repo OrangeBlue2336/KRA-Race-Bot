@@ -82,6 +82,7 @@ module.exports = {
   gambleWinChance: Number(process.env.GAMBLE_WIN_CHANCE || 0.5),
   gambleMinAmount: Number(process.env.GAMBLE_MIN_AMOUNT || 1),
   gambleCooldownSeconds: Number(process.env.GAMBLE_COOLDOWN_SECONDS || 3),
+  blackjackMinAmount: Number(process.env.BLACKJACK_MIN_AMOUNT || 100),
   developerUserIds: String(process.env.DEVELOPER_USER_IDS || '')
     .split(',')
     .map((id) => id.trim())
