@@ -134,20 +134,14 @@ async function notifyUser(client, ticket, evaluation, top3, balance) {
   return { payout, odds };
 }
 
-async function settleTicket(client, ticket) {
-  const lockedTicket = await Ticket.findOneAndUpdate(
-    { _id: ticket._id, status: 'pending' },
-    { $set: { status: 'checking', settlementError: '' } },
-    { new: true },
-  );
+async function fetchRaceSettlementData(apiMeet, rcDate, rcNo, apiCache) {
+  const cacheKey = `${apiMeet}:${rcDate}:${rcNo}`;
+  if (apiCache.has(cacheKey)) return apiCache.get(cacheKey);
 
-  if (!lockedTicket) return;
-
-  try {
-    const apiMeet = MEET_BY_CODE[lockedTicket.meetCode]?.apiMeet || lockedTicket.meet;
+  const promise = (async () => {
     const [raceResults, summary] = await Promise.all([
-      kraApi.getRaceResult(apiMeet, lockedTicket.rcDate, lockedTicket.rcNo),
-      kraApi.getRaceSummaryResult(apiMeet, lockedTicket.rcDate, lockedTicket.rcNo),
+      kraApi.getRaceResult(apiMeet, rcDate, rcNo),
+      kraApi.getRaceSummaryResult(apiMeet, rcDate, rcNo),
     ]);
 
     const top3 = raceResults
@@ -161,8 +155,35 @@ async function settleTicket(client, ticket) {
         plcOdds: Number(result.plcOdds || 0),
       }));
 
-    const oddsItems = summary ? [] : await kraApi.getIntegratedOdds(apiMeet, lockedTicket.rcDate, lockedTicket.rcNo);
+    const oddsItems = summary ? [] : await kraApi.getIntegratedOdds(apiMeet, rcDate, rcNo);
     const settlementSummary = summary || buildSummaryFromIntegratedOdds(top3, oddsItems);
+
+    return { top3, settlementSummary };
+  })();
+
+  apiCache.set(cacheKey, promise);
+  try {
+    return await promise;
+  } catch (error) {
+    apiCache.delete(cacheKey); // 실패한 요청은 캐시에서 제거해 다음 티켓에서 재시도
+    throw error;
+  }
+}
+
+async function settleTicket(client, ticket, apiCache) {
+  const lockedTicket = await Ticket.findOneAndUpdate(
+    { _id: ticket._id, status: 'pending' },
+    { $set: { status: 'checking', settlementError: '' } },
+    { new: true },
+  );
+
+  if (!lockedTicket) return;
+
+  try {
+    const apiMeet = MEET_BY_CODE[lockedTicket.meetCode]?.apiMeet || lockedTicket.meet;
+    const { top3, settlementSummary } = await fetchRaceSettlementData(
+      apiMeet, lockedTicket.rcDate, lockedTicket.rcNo, apiCache,
+    );
 
     if (top3.length < 3 || (!settlementSummary && !lockedTicket.isTest)) {
       await Ticket.updateOne(
@@ -220,9 +241,10 @@ async function checkPendingTickets(client) {
 
   try {
     const tickets = await Ticket.find({ status: 'pending' }).sort({ createdAt: 1 }).limit(100);
+    const apiCache = new Map();
     for (const ticket of tickets) {
       if (canCheckRaceResult(ticket.rcDate, ticket.schStTime, resultCheckDelayMinutes)) {
-        await settleTicket(client, ticket);
+        await settleTicket(client, ticket, apiCache);
       }
     }
   } finally {
