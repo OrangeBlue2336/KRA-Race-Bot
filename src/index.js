@@ -200,6 +200,12 @@ function blackjackDraw(game) {
   return card;
 }
 
+function blackjackCardValue(rank) {
+  if (rank === 'A') return 11;
+  if (['10', 'J', 'Q', 'K'].includes(rank)) return 10;
+  return Number(rank);
+}
+
 function blackjackScore(cards) {
   let total = 0;
   let aces = 0;
@@ -238,7 +244,8 @@ function blackjackButtons(game) {
   const hand = game.hands[game.activeHandIndex];
   if (!hand || game.status !== 'active') return [];
   const canDouble = hand.cards.length === 2 && !hand.doubled;
-  const canSplit = game.hands.length === 1 && hand.cards.length === 2 && hand.cards[0].rank === hand.cards[1].rank;
+  const canSplit = game.hands.length === 1 && hand.cards.length === 2
+    && blackjackCardValue(hand.cards[0].rank) === blackjackCardValue(hand.cards[1].rank);
   return [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game._id}:hit`).setLabel('힛').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game._id}:stand`).setLabel('스탠드').setStyle(ButtonStyle.Danger),
@@ -388,7 +395,10 @@ async function handleBlackjackAction(interaction) {
       hand.cards.push(blackjackDraw(game));
       hand.stood = true;
     } else if (action === 'split') {
-      if (game.hands.length !== 1 || hand.cards.length !== 2 || hand.cards[0].rank !== hand.cards[1].rank) throw new Error('스플릿은 같은 숫자의 처음 두 카드에서 한 번만 가능합니다.');
+      if (game.hands.length !== 1 || hand.cards.length !== 2
+        || blackjackCardValue(hand.cards[0].rank) !== blackjackCardValue(hand.cards[1].rank)) {
+        throw new Error('스플릿은 같은 점수 값의 처음 두 카드에서 한 번만 가능합니다.');
+      }
       const account = await UserMoney.findOneAndUpdate({ discordId: game.discordId, balance: { $gte: hand.bet } }, { $inc: { balance: -hand.bet }, $set: { username: interaction.user.username } }, { new: true });
       if (!account) throw new Error('스플릿에 필요한 머니가 부족합니다.');
       const secondHand = { cards: [hand.cards.pop()], bet: hand.bet, doubled: false, stood: false };
