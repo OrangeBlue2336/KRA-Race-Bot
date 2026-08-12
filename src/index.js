@@ -21,7 +21,6 @@ const config = require('./config');
 const AlertSubscription = require('./models/AlertSubscription');
 const Ticket = require('./models/Ticket');
 const UserMoney = require('./models/UserMoney');
-const BlackjackGame = require('./models/BlackjackGame');
 const kraApi = require('./services/kraApi');
 const { ALERT_TYPES, checkTicketAlerts, startAlertWorker } = require('./services/alertService');
 const { startKeepAlive } = require('./services/keepAliveServer');
@@ -43,7 +42,7 @@ const {
 } = require('./utils/time');
 const dayjs = require('dayjs');
 
-const RESPONSIBLE_GAMBLING_STATUS = '도박 상담 문의는 국번 없이 1336';
+const RESPONSIBLE_GAMBLING_STATUS = '도박 중독 상담은 국번 없이 1336';
 
 const CUSTOM_IDS = {
   meetSelect: 'ticket:meet',
@@ -65,6 +64,8 @@ const CUSTOM_IDS = {
   ticketConfirmPrefix: 'ticket:confirm:',
   ticketCancelPrefix: 'ticket:cancel:',
   blackjackActionPrefix: 'blackjack:',
+  giftConfirmPrefix: 'gift:confirm:',
+  giftCancelPrefix: 'gift:cancel:',
 };
 
 const scheduleCache = new Map();
@@ -96,6 +97,173 @@ function setGambleCooldown(userId, seconds) {
   setTimeout(() => {
     if (gambleCooldowns.get(key) === until) gambleCooldowns.delete(key);
   }, seconds * 1000 + 100);
+}
+
+const moneyGiveCooldowns = new Map();
+
+function moneyGiveCooldownUntil(userId) {
+  return moneyGiveCooldowns.get(String(userId)) || 0;
+}
+
+function setMoneyGiveCooldown(userId, seconds) {
+  const key = String(userId);
+  const until = Date.now() + seconds * 1000;
+  moneyGiveCooldowns.set(key, until);
+  setTimeout(() => {
+    if (moneyGiveCooldowns.get(key) === until) moneyGiveCooldowns.delete(key);
+  }, seconds * 1000 + 100);
+}
+
+function randomMoneyGiveAmount() {
+  const { moneyGiveMinAmount, moneyGiveMaxAmount, moneyGiveStep } = config;
+  const steps = Math.floor((moneyGiveMaxAmount - moneyGiveMinAmount) / moneyGiveStep) + 1;
+  return moneyGiveMinAmount + Math.floor(Math.random() * steps) * moneyGiveStep;
+}
+
+async function handleMoneyGiveCommand(interaction) {
+  const until = moneyGiveCooldownUntil(interaction.user.id);
+  if (until > Date.now()) {
+    const unixSeconds = Math.floor(until / 1000);
+    await interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xe67e22)
+        .setTitle('아직 받을 수 없습니다')
+        .setDescription(`<t:${unixSeconds}:R>에 다시 지급 받을 수 있습니다. (<t:${unixSeconds}:T>)`)],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const account = await UserMoney.findOne({ discordId: interaction.user.id }).lean();
+  if (!account) {
+    await interaction.reply({ content: '먼저 `/가입` 명령어를 실행해주세요.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const amount = randomMoneyGiveAmount();
+  setMoneyGiveCooldown(interaction.user.id, config.moneyGiveCooldownSeconds);
+  const updated = await UserMoney.findOneAndUpdate(
+    { discordId: interaction.user.id },
+    { $inc: { balance: amount }, $set: { username: interaction.user.username } },
+    { new: true },
+  );
+
+  await interaction.reply({
+    embeds: [new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle('💵 돈내놔!')
+      .setDescription(`**${moneyText(amount)}**를 받았습니다!`)
+      .addFields({ name: '현재 보유 머니', value: moneyText(updated.balance), inline: true })
+      .setTimestamp()],
+  });
+}
+
+const pendingGifts = new Map();
+
+function createGiftId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function handleGiftCommand(interaction) {
+  const amount = interaction.options.getInteger('머니', true);
+  const target = interaction.options.getUser('대상', true);
+
+  if (target.id === interaction.user.id) {
+    await interaction.reply({ content: '자기 자신에게는 선물할 수 없습니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (target.bot) {
+    await interaction.reply({ content: '봇에게는 선물할 수 없습니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const sender = await UserMoney.findOne({ discordId: interaction.user.id }).lean();
+  if (!sender) {
+    await interaction.reply({ content: '선물을 보내려면 먼저 `/가입` 명령어를 실행해주세요.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (sender.balance < amount) {
+    await interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xe74c3c)
+        .setTitle('머니 부족')
+        .setDescription('보유 머니가 부족하여 선물할 수 없습니다.')
+        .addFields(
+          { name: '선물 금액', value: moneyText(amount), inline: true },
+          { name: '현재 보유 머니', value: moneyText(sender.balance), inline: true },
+        )],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const receiver = await UserMoney.findOne({ discordId: target.id }).lean();
+  if (!receiver) {
+    await interaction.reply({ content: '대상자가 머니 시스템에 가입되어 있지 않습니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const giftId = createGiftId();
+  pendingGifts.set(giftId, {
+    fromId: interaction.user.id,
+    toId: target.id,
+    toUsername: target.username,
+    amount,
+    expiresAt: Date.now() + 5 * 60_000,
+  });
+  setTimeout(() => pendingGifts.delete(giftId), 5 * 60_000 + 100);
+
+  await interaction.reply({
+    embeds: [new EmbedBuilder()
+      .setColor(0xf1c40f)
+      .setTitle('🎁 머니 선물 확인')
+      .setDescription(`**${target.username}**님에게 **${moneyText(amount)}**를 선물하시겠습니까?`)
+      .addFields({ name: '현재 보유 머니', value: moneyText(sender.balance), inline: true })],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`${CUSTOM_IDS.giftConfirmPrefix}${giftId}`).setLabel('확인').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`${CUSTOM_IDS.giftCancelPrefix}${giftId}`).setLabel('취소').setStyle(ButtonStyle.Secondary),
+    )],
+  });
+}
+
+async function handleGiftConfirmation(interaction, confirmed) {
+  const prefix = confirmed ? CUSTOM_IDS.giftConfirmPrefix : CUSTOM_IDS.giftCancelPrefix;
+  const giftId = interaction.customId.slice(prefix.length);
+  const gift = pendingGifts.get(giftId);
+  if (!gift || gift.fromId !== interaction.user.id) {
+    await interaction.reply({ content: '올바르지 않은 선물 요청입니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  pendingGifts.delete(giftId);
+
+  if (!confirmed) {
+    await interaction.update({ content: '선물을 취소했습니다.', embeds: [], components: [] });
+    return;
+  }
+
+  const sender = await UserMoney.findOneAndUpdate(
+    { discordId: gift.fromId, balance: { $gte: gift.amount } },
+    { $inc: { balance: -gift.amount }, $set: { username: interaction.user.username } },
+    { new: true },
+  );
+  if (!sender) {
+    await interaction.update({ content: '보유 머니가 부족하여 선물을 보낼 수 없습니다.', embeds: [], components: [] });
+    return;
+  }
+  const receiver = await UserMoney.findOneAndUpdate({ discordId: gift.toId }, { $inc: { balance: gift.amount } }, { new: true });
+  if (!receiver) {
+    await UserMoney.updateOne({ discordId: gift.fromId }, { $inc: { balance: gift.amount } });
+    await interaction.update({ content: '대상자가 머니 시스템에서 확인되지 않아 선물을 취소했습니다.', embeds: [], components: [] });
+    return;
+  }
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle('🎁 선물 완료')
+      .setDescription(`**${gift.toUsername}**님에게 **${moneyText(gift.amount)}**를 선물했습니다.`)
+      .addFields({ name: '현재 보유 머니', value: moneyText(sender.balance), inline: true })],
+    components: [],
+  });
 }
 
 async function performGamble(userId, username, amount) {
@@ -184,6 +352,19 @@ async function handleGamblePrefixCommand(message) {
 
 const BLACKJACK_SUITS = ['hearts', 'clubs', 'diamonds', 'spades'];
 const BLACKJACK_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const BLACKJACK_GAME_TTL_MS = 15 * 60_000;
+const blackjackGames = new Map();
+
+function createBlackjackGameId() {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function addBlackjackGame(game) {
+  blackjackGames.set(game.id, game);
+  setTimeout(() => {
+    if (blackjackGames.get(game.id) === game) blackjackGames.delete(game.id);
+  }, BLACKJACK_GAME_TTL_MS);
+}
 
 function blackjackDeck() {
   const deck = BLACKJACK_SUITS.flatMap((suit) => BLACKJACK_RANKS.map((rank) => ({ suit, rank })));
@@ -247,10 +428,10 @@ function blackjackButtons(game) {
   const canSplit = game.hands.length === 1 && hand.cards.length === 2
     && blackjackCardValue(hand.cards[0].rank) === blackjackCardValue(hand.cards[1].rank);
   return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game._id}:hit`).setLabel('힛').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game._id}:stand`).setLabel('스탠드').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game._id}:double`).setLabel('더블 다운').setStyle(ButtonStyle.Primary).setDisabled(!canDouble),
-    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game._id}:split`).setLabel('스플릿').setStyle(ButtonStyle.Primary).setDisabled(!canSplit),
+    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game.id}:hit`).setLabel('힛').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game.id}:stand`).setLabel('스탠드').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game.id}:double`).setLabel('더블 다운').setStyle(ButtonStyle.Primary).setDisabled(!canDouble),
+    new ButtonBuilder().setCustomId(`${CUSTOM_IDS.blackjackActionPrefix}${game.id}:split`).setLabel('스플릿').setStyle(ButtonStyle.Primary).setDisabled(!canSplit),
   )];
 }
 
@@ -354,30 +535,34 @@ async function handleBlackjackCommand(interaction) {
     { new: true },
   );
   if (!charged) return interaction.reply({ content: '보유 머니가 부족합니다.', flags: MessageFlags.Ephemeral });
-  const game = new BlackjackGame({
+  const game = {
+    id: createBlackjackGameId(),
     discordId: interaction.user.id,
     username: interaction.user.username,
     deck: blackjackDeck(),
     dealerCards: [],
     hands: [{ cards: [], bet: amount, doubled: false, stood: false }],
-  });
+    activeHandIndex: 0,
+    status: 'active',
+    locked: false,
+  };
   game.hands[0].cards.push(blackjackDraw(game));
   game.dealerCards.push(blackjackDraw(game));
   game.hands[0].cards.push(blackjackDraw(game));
   game.dealerCards.push(blackjackDraw(game));
   const completed = await blackjackSettleInitialNaturals(game);
-  await game.save();
+  if (!completed) addBlackjackGame(game);
   await interaction.reply({ embeds: [blackjackEmbed(game, { revealDealer: completed, completedHandIndex: completed ? 0 : null })], components: completed ? [] : blackjackButtons(game) });
 }
 
 async function handleBlackjackAction(interaction) {
   const [, gameId, action] = interaction.customId.split(':');
-  const game = await BlackjackGame.findOneAndUpdate(
-    { _id: gameId, discordId: interaction.user.id, status: 'active', locked: { $ne: true } },
-    { $set: { locked: true } },
-    { new: true },
-  );
-  if (!game) return interaction.reply({ content: '이미 종료되었거나 다른 처리 중인 블랙잭 게임입니다.', flags: MessageFlags.Ephemeral });
+  const game = blackjackGames.get(gameId);
+  if (!game || game.discordId !== interaction.user.id || game.status !== 'active') {
+    return interaction.reply({ content: '이미 종료되었거나 만료된 블랙잭 게임입니다.', flags: MessageFlags.Ephemeral });
+  }
+  if (game.locked) return interaction.reply({ content: '이 블랙잭 게임의 이전 행동을 처리 중입니다.', flags: MessageFlags.Ephemeral });
+  game.locked = true;
   try {
     const hand = game.hands[game.activeHandIndex];
     if (!hand) throw new Error('진행할 손을 찾을 수 없습니다.');
@@ -414,20 +599,16 @@ async function handleBlackjackAction(interaction) {
     while (game.activeHandIndex < game.hands.length && game.hands[game.activeHandIndex].stood) game.activeHandIndex += 1;
     if (game.activeHandIndex >= game.hands.length) await blackjackFinish(game);
     game.locked = false;
-    game.markModified('deck');
-    game.markModified('dealerCards');
-    game.markModified('hands');
-    await game.save();
     if (game.status === 'active') {
       await interaction.update({ embeds: [blackjackEmbed(game)], components: blackjackButtons(game) });
       return;
     }
+    blackjackGames.delete(game.id);
     const finalEmbeds = game.hands.map((_, index) => blackjackEmbed(game, { revealDealer: true, completedHandIndex: index }));
     await interaction.update({ embeds: [finalEmbeds[0]], components: [] });
     for (const embed of finalEmbeds.slice(1)) await interaction.followUp({ embeds: [embed] });
   } catch (error) {
     game.locked = false;
-    await game.save();
     throw error;
   }
 }
@@ -563,6 +744,21 @@ function getCommandData() {
         .setRequired(true)
         .setMinLength(1)
         .setMaxLength(20)),
+    new SlashCommandBuilder()
+      .setName('돈내놔')
+      .setDescription(`즉시 ${config.moneyGiveMinAmount.toLocaleString()}~${config.moneyGiveMaxAmount.toLocaleString()}머니를 무작위로 받습니다. (5분 쿨다운)`),
+    new SlashCommandBuilder()
+      .setName('선물')
+      .setDescription('보유한 머니를 다른 사용자에게 선물합니다.')
+      .addIntegerOption((option) => option
+        .setName('머니')
+        .setDescription('선물할 머니 수량을 입력합니다.')
+        .setRequired(true)
+        .setMinValue(1))
+      .addUserOption((option) => option
+        .setName('대상')
+        .setDescription('머니를 선물할 서버 멤버를 선택합니다.')
+        .setRequired(true)),
   ];
 }
 
@@ -1192,7 +1388,7 @@ async function handleSignupCommand(interaction) {
       balance: config.signupBonusMoney,
       guildIds: interaction.guildId ? [interaction.guildId] : [],
     });
-    await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('가입 완료').setDescription(`가입 기념으로 **${moneyText(config.signupBonusMoney)}**를 지급했습니다.`).addFields({ name: '현재 보유 머니', value: moneyText(account.balance) })]});
+    await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ 가입 완료').setDescription(`가입 기념으로 **${moneyText(config.signupBonusMoney)}**를 지급했습니다.`).addFields({ name: '현재 보유 머니', value: moneyText(account.balance) })]});
   } catch (error) {
     if (error.code !== 11000) throw error;
     await interaction.reply({ content: '이미 가입되어 있습니다.'});
@@ -1834,6 +2030,16 @@ async function onInteractionCreate(interaction) {
       return;
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === '돈내놔') {
+      await handleMoneyGiveCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === '선물') {
+      await handleGiftCommand(interaction);
+      return;
+    }
+
     if (interaction.isButton() && interaction.customId.startsWith(CUSTOM_IDS.blackjackActionPrefix)) {
       await handleBlackjackAction(interaction);
       return;
@@ -1876,6 +2082,14 @@ async function onInteractionCreate(interaction) {
       || interaction.customId.startsWith(CUSTOM_IDS.alertCancelDismissPrefix)
     )) {
       await handleAlertCancelButton(interaction);
+      return;
+    }
+
+    if (interaction.isButton() && (
+      interaction.customId.startsWith(CUSTOM_IDS.giftConfirmPrefix)
+      || interaction.customId.startsWith(CUSTOM_IDS.giftCancelPrefix)
+    )) {
+      await handleGiftConfirmation(interaction, interaction.customId.startsWith(CUSTOM_IDS.giftConfirmPrefix));
       return;
     }
 
@@ -1924,7 +2138,6 @@ async function ensureDatabaseIndexes() {
 
   await Ticket.createIndexes();
   await UserMoney.createIndexes();
-  await BlackjackGame.createIndexes();
   await AlertSubscription.createIndexes();
 }
 

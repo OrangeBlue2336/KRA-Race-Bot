@@ -83,6 +83,10 @@ module.exports = {
   gambleMinAmount: Number(process.env.GAMBLE_MIN_AMOUNT || 1),
   gambleCooldownSeconds: Number(process.env.GAMBLE_COOLDOWN_SECONDS || 3),
   blackjackMinAmount: Number(process.env.BLACKJACK_MIN_AMOUNT || 100),
+  moneyGiveMinAmount: Number(process.env.MONEY_GIVE_MIN_AMOUNT || 5000),
+  moneyGiveMaxAmount: Number(process.env.MONEY_GIVE_MAX_AMOUNT || 15000),
+  moneyGiveStep: Number(process.env.MONEY_GIVE_STEP || 100),
+  moneyGiveCooldownSeconds: Number(process.env.MONEY_GIVE_COOLDOWN_SECONDS || 300),
   developerUserIds: String(process.env.DEVELOPER_USER_IDS || '')
     .split(',')
     .map((id) => id.trim())

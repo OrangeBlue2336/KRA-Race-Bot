@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "deploy": "node src/deploy-commands.js",
-    "check": "node --check src/index.js && node --check src/deploy-commands.js && node --check src/config.js && node --check src/models/Ticket.js && node --check src/models/UserMoney.js && node --check src/models/BlackjackGame.js && node --check src/models/AlertSubscription.js && node --check src/services/kraApi.js && node --check src/services/alertService.js && node --check src/services/keepAliveServer.js && node --check src/services/settlementService.js && node --check src/utils/betting.js && node --check src/utils/time.js"
+    "check": "node --check src/index.js && node --check src/deploy-commands.js && node --check src/config.js && node --check src/models/Ticket.js && node --check src/models/UserMoney.js && node --check src/models/AlertSubscription.js && node --check src/services/kraApi.js && node --check src/services/alertService.js && node --check src/services/keepAliveServer.js && node --check src/services/settlementService.js && node --check src/utils/betting.js && node --check src/utils/time.js"
   },
   "dependencies": {
     "dayjs": "^1.11.13",
