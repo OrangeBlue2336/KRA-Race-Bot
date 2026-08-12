@@ -65,6 +65,20 @@ const MEET_BY_CODE = Object.fromEntries(MEETS.map((meet) => [meet.code, meet]));
 const renderExternalUrl = process.env.RENDER_EXTERNAL_URL
   || (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '');
 
+// 단계, 성공 확률, 배당을 이 표에서 한 번에 조정할 수 있습니다.
+const SHOE_GAME_STAGES = [
+  { level: 1, successChance: 0.95, multiplier: 1.03, grade: '은편자', image: '은편자.png' },
+  { level: 2, successChance: 0.84, multiplier: 1.23, grade: '은편자', image: '은편자.png' },
+  { level: 3, successChance: 0.76, multiplier: 1.62, grade: '은편자', image: '은편자.png' },
+  { level: 4, successChance: 0.68, multiplier: 2.38, grade: '금편자', image: '금편자.png' },
+  { level: 5, successChance: 0.60, multiplier: 3.96, grade: '금편자', image: '금편자.png' },
+  { level: 6, successChance: 0.52, multiplier: 7.62, grade: '금편자', image: '금편자.png' },
+  { level: 7, successChance: 0.44, multiplier: 17.3, grade: '무지개 편자', image: '무지개_편자.png' },
+  { level: 8, successChance: 0.36, multiplier: 48.1, grade: '무지개 편자', image: '무지개_편자.png' },
+  { level: 9, successChance: 0.28, multiplier: 60, grade: '무지개 편자', image: '무지개_편자.png' },
+  { level: 10, successChance: 0.20, multiplier: 100, grade: '무지개 편자', image: '무지개_편자.png' },
+];
+
 module.exports = {
   discordToken: process.env.DISCORD_TOKEN,
   discordClientId: process.env.DISCORD_CLIENT_ID,
@@ -83,6 +97,9 @@ module.exports = {
   gambleMinAmount: Number(process.env.GAMBLE_MIN_AMOUNT || 1),
   gambleCooldownSeconds: Number(process.env.GAMBLE_COOLDOWN_SECONDS || 3),
   blackjackMinAmount: Number(process.env.BLACKJACK_MIN_AMOUNT || 100),
+  shoeGameMinAmount: Number(process.env.SHOE_GAME_MIN_AMOUNT || 100),
+  shoeGameMaxAmount: Number(process.env.SHOE_GAME_MAX_AMOUNT || 100_000),
+  shoeGameCooldownSeconds: Number(process.env.SHOE_GAME_COOLDOWN_SECONDS || 10),
   moneyGiveMinAmount: Number(process.env.MONEY_GIVE_MIN_AMOUNT || 5000),
   moneyGiveMaxAmount: Number(process.env.MONEY_GIVE_MAX_AMOUNT || 15000),
   moneyGiveStep: Number(process.env.MONEY_GIVE_STEP || 100),
@@ -98,4 +115,5 @@ module.exports = {
   BET_TYPE_BY_NAME,
   MEETS,
   MEET_BY_CODE,
+  SHOE_GAME_STAGES,
 };
