@@ -80,6 +80,10 @@ function moneyText(amount) {
   return `${Number(amount || 0).toLocaleString()}머니`;
 }
 
+function displayUsername(username) {
+  return String(username || '알 수 없는 유저').replace(/[\\`*_{}\[\]()<>#+\-.!|]/g, '\\$&');
+}
+
 const gambleCooldowns = new Map();
 
 function gambleCooldownRemainingSeconds(userId) {
@@ -218,7 +222,7 @@ async function handleGiftCommand(interaction) {
     embeds: [new EmbedBuilder()
       .setColor(0xf1c40f)
       .setTitle('🎁 머니 선물 확인')
-      .setDescription(`**${target.username}**님에게 **${moneyText(amount)}**를 선물하시겠습니까?`)
+      .setDescription(`**${displayUsername(target.username)}**님에게 **${moneyText(amount)}**를 선물하시겠습니까?`)
       .addFields({ name: '현재 보유 머니', value: moneyText(sender.balance), inline: true })],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`${CUSTOM_IDS.giftConfirmPrefix}${giftId}`).setLabel('확인').setStyle(ButtonStyle.Success),
@@ -1169,6 +1173,16 @@ function formatTrackCondition(trackInfo) {
   return `날씨: ${cleanValue(trackInfo.weather)} · 경주로 상태: ${cleanValue(trackInfo.track)} · 함수율: ${cleanValue(trackInfo.waterPercent)}%`;
 }
 
+async function getDisplayedTrackInfo(meet, rcDate, rcNo) {
+  // KRA 주로 API는 당일 경주별 값이 실시간으로 갱신되지 않는다. 당일에는
+  // 이미 종료된 가장 최근 경주의 값을 표시하고, 1경주는 해당 경주 값을 사용한다.
+  const requestedRaceNo = Number(rcNo);
+  const trackRaceNo = String(rcDate) === todayKST() && requestedRaceNo > 1
+    ? requestedRaceNo - 1
+    : requestedRaceNo;
+  return kraApi.getTrackInfo(meet.apiMeet, rcDate, trackRaceNo);
+}
+
 function raceAnalysisContext(userId, meetCode, rcDate, rcNo, index) {
   return `${userId}|${meetCode}|${rcDate}|${rcNo}|${index}`;
 }
@@ -1239,7 +1253,7 @@ async function buildRaceAnalysisMessage(context) {
     kraApi.getJockeyResult(meet.apiMeet, entry.jkNo),
     kraApi.getTrainerInfo(meet.apiMeet, entry.trNo),
     kraApi.getEntryHorseWeightInfo(meet.apiMeet, context.rcDate, entry.hrNo),
-    kraApi.getTrackInfo(meet.apiMeet, context.rcDate, context.rcNo),
+    getDisplayedTrackInfo(meet, context.rcDate, context.rcNo),
   ]);
   const normalizedContext = { ...context, index };
   return { embeds: [buildRaceAnalysisEmbed(meet, context.rcDate, context.rcNo, entry, horse, jockey, trainer, weight, trackInfo)], components: raceAnalysisComponents(entries, normalizedContext) };
@@ -1596,7 +1610,9 @@ async function handleDailyCommand(interaction) {
     return;
   }
   const yesterday = nowKST().subtract(1, 'day').format('YYYYMMDD');
-  const streak = account.lastDailyDate === yesterday ? Math.min(Number(account.dailyStreak || 0) + 1, 5) : 1;
+  // dailyStreak은 출석한 총 일수로 저장한다. 첫 출석은 보너스 0%이며,
+  // 그 뒤 5일 연속 출석 시 50%가 되므로 최대 6일까지 기록해야 한다.
+  const streak = account.lastDailyDate === yesterday ? Math.min(Number(account.dailyStreak || 0) + 1, 6) : 1;
   const bonusPercent = Math.min((streak - 1) * 10, 50);
   const amount = Math.floor(config.dailyBaseMoney * (1 + bonusPercent / 100));
   const updated = await UserMoney.findOneAndUpdate(
@@ -1608,7 +1624,7 @@ async function handleDailyCommand(interaction) {
     await interaction.reply({ content: '오늘의 데일리 머니는 이미 받았습니다. 다음 지급은 자정 이후입니다.',  });
     return;
   }
-  await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('데일리 지급 완료').setDescription(`**${moneyText(amount)}**를 지급했습니다. (연속 ${streak}일 · 보너스 ${bonusPercent}%)`).addFields({ name: '현재 보유 머니', value: moneyText(updated.balance) })]});
+  await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('데일리 지급 완료').setDescription(`**${moneyText(amount)}**를 지급했습니다. (연속 ${Math.max(streak - 1, 0)}일 · 보너스 ${bonusPercent}%)`).addFields({ name: '현재 보유 머니', value: moneyText(updated.balance) })]});
 }
 
 async function handleWalletCommand(interaction) {
@@ -1617,7 +1633,7 @@ async function handleWalletCommand(interaction) {
     await interaction.reply({ content: '지갑을 사용하려면 먼저 `/가입` 명령어를 실행해주세요.'});
     return;
   }
-  await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x3498db).setTitle(`:coin: ${interaction.user.username}님의 지갑`).addFields({ name: '보유 머니', value: `**${moneyText(account.balance)}**` }, { name: '데일리 연속 출석', value: `${account.dailyStreak || 0}일`, inline: true })]});
+  await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x3498db).setTitle(`:coin: ${interaction.user.username}님의 지갑`).addFields({ name: '보유 머니', value: `**${moneyText(account.balance)}**` }, { name: '데일리 연속 출석', value: `${Math.max(Number(account.dailyStreak || 0) - 1, 0)}일`, inline: true })]});
 }
 
 async function handleLeaderboardCommand(interaction) {
@@ -1627,10 +1643,28 @@ async function handleLeaderboardCommand(interaction) {
     return;
   }
   const filter = scope === 'server' ? { guildIds: interaction.guildId } : {};
-  const users = await UserMoney.find(filter).sort({ balance: -1, createdAt: 1 }).limit(10).lean();
-  const description = users.length
-    ? users.map((user, index) => `**${index + 1}.** ${user.username} — ${moneyText(user.balance)}`).join('\n')
-    : '아직 가입한 유저가 없습니다.';
+  const users = await UserMoney.find(filter).sort({ balance: -1, createdAt: 1 }).limit(25).lean();
+  let description = '아직 가입한 유저가 없습니다.';
+  if (users.length) {
+    if (scope === 'server') {
+      const medals = [':first_place:', ':second_place:', ':third_place:'];
+      const lines = users.map((user, index) => {
+        const rank = medals[index] || `**${index + 1}.**`;
+        const star = String(user.discordId) === interaction.user.id ? ' :star:' : '';
+        return `${rank} <@${user.discordId}> - ${moneyText(user.balance)}${star}`;
+      });
+      if (!users.some((user) => String(user.discordId) === interaction.user.id)) {
+        const currentUser = await UserMoney.findOne({ ...filter, discordId: interaction.user.id }).lean();
+        if (currentUser) {
+          const higherCount = await UserMoney.countDocuments({ ...filter, balance: { $gt: currentUser.balance } });
+          lines.push(`**내 순위 · ${higherCount + 1}위** <@${currentUser.discordId}> - ${moneyText(currentUser.balance)} :star:`);
+        }
+      }
+      description = lines.join('\n');
+    } else {
+      description = users.map((user, index) => `**${index + 1}.** ${displayUsername(user.username)} - ${moneyText(user.balance)}`).join('\n');
+    }
+  }
   await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xf1c40f).setTitle(scope === 'server' ? '📊 서버 머니 리더보드' : '📊 글로벌 머니 리더보드').setDescription(description)] });
 }
 
@@ -1647,7 +1681,7 @@ async function handleDeveloperMoneyCommand(message) {
   const filter = operation.toLowerCase() === 'add' ? { discordId } : { discordId, balance: { $gte: amount } };
   const account = await UserMoney.findOneAndUpdate(filter, update, { new: true });
   await message.reply(account
-    ? `${account.username}님의 잔액을 ${operation.toLowerCase() === 'add' ? '증가' : '차감'}했습니다. 현재 잔액: ${moneyText(account.balance)}`
+    ? `${displayUsername(account.username)}님의 잔액을 ${operation.toLowerCase() === 'add' ? '증가' : '차감'}했습니다. 현재 잔액: ${moneyText(account.balance)}`
     : '대상 유저가 가입하지 않았거나 차감할 머니가 부족합니다.');
 }
 
@@ -1719,7 +1753,7 @@ async function handleRaceInfoCommand(interaction) {
   const [entries, cancels, trackInfo] = await Promise.all([
     kraApi.getEntryInfo(meet.apiMeet, rcDate, rcNo),
     kraApi.getRaceHorseCancels(meet.apiMeet, rcDate, rcNo),
-    kraApi.getTrackInfo(meet.apiMeet, rcDate, rcNo),
+    getDisplayedTrackInfo(meet, rcDate, rcNo),
   ]);
 
   if (entries.length === 0) {
