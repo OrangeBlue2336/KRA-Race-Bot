@@ -10,25 +10,18 @@ const config = require('../config');
 const UserMoney = require('../models/UserMoney');
 const CUSTOM_IDS = require('../utils/customIds');
 const { moneyText } = require('../utils/common');
+const { createGameId, createCooldownManager, createGameSessionStore } = require('../utils/gameSession');
 
 const SHOE_GAME_ASSET_DIR = 'assets/img/ShoeGame';
-const shoeGames = new Map();
+const shoeGames = createGameSessionStore();
 const shoeGameUserIds = new Map();
-const shoeGameCooldowns = new Map();
-
-function createShoeGameId() {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function shoeGameCooldownUntil(userId) {
-  return shoeGameCooldowns.get(String(userId)) || 0;
-}
+const shoeGameCooldowns = createCooldownManager();
 
 function finishShoeGame(game) {
   game.status = 'completed';
   shoeGames.delete(game.id);
   shoeGameUserIds.delete(game.discordId);
-  shoeGameCooldowns.set(game.discordId, Date.now() + config.shoeGameCooldownSeconds * 1000);
+  shoeGameCooldowns.set(game.discordId, config.shoeGameCooldownSeconds);
 }
 
 function shoeGameStage(level) {
@@ -112,7 +105,7 @@ function shoeGameEmbed(game, { result = 'active', balance = null } = {}) {
 
 async function handleShoeGameCommand(interaction) {
   const userId = interaction.user.id;
-  const until = shoeGameCooldownUntil(userId);
+  const until = shoeGameCooldowns.getUntil(userId);
   if (until > Date.now()) {
     return interaction.reply({
       content: `편자강화는 게임 종료 후 ${config.shoeGameCooldownSeconds}초를 기다려야 합니다. <t:${Math.ceil(until / 1000)}:R>에 다시 시도해주세요.`,
@@ -134,8 +127,8 @@ async function handleShoeGameCommand(interaction) {
   );
   if (!account) return interaction.reply({ content: '가입되어 있지 않거나 보유 머니가 부족합니다. 먼저 `/가입` 및 `/지갑`을 확인해주세요.', flags: MessageFlags.Ephemeral });
 
-  const game = { id: createShoeGameId(), discordId: userId, username: interaction.user.username, amount, stage: 0, status: 'active', locked: false };
-  shoeGames.set(game.id, game);
+  const game = { id: createGameId(), discordId: userId, username: interaction.user.username, amount, stage: 0, status: 'active', locked: false };
+  shoeGames.add(game);
   shoeGameUserIds.set(userId, game.id);
   const stage = shoeGameStage(game.stage);
   await interaction.reply({ embeds: [shoeGameEmbed(game, { balance: account.balance })], components: shoeGameButtons(game), files: [shoeGameImageFile(stage)] });

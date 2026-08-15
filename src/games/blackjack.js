@@ -9,22 +9,12 @@ const config = require('../config');
 const UserMoney = require('../models/UserMoney');
 const CUSTOM_IDS = require('../utils/customIds');
 const { moneyText } = require('../utils/common');
+const { createGameId, createGameSessionStore } = require('../utils/gameSession');
 
 const BLACKJACK_SUITS = ['hearts', 'clubs', 'diamonds', 'spades'];
 const BLACKJACK_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const BLACKJACK_GAME_TTL_MS = 15 * 60_000;
-const blackjackGames = new Map();
-
-function createBlackjackGameId() {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function addBlackjackGame(game) {
-  blackjackGames.set(game.id, game);
-  setTimeout(() => {
-    if (blackjackGames.get(game.id) === game) blackjackGames.delete(game.id);
-  }, BLACKJACK_GAME_TTL_MS);
-}
+const blackjackGames = createGameSessionStore(BLACKJACK_GAME_TTL_MS);
 
 function blackjackDeck() {
   const deck = BLACKJACK_SUITS.flatMap((suit) => BLACKJACK_RANKS.map((rank) => ({ suit, rank })));
@@ -196,7 +186,7 @@ async function handleBlackjackCommand(interaction) {
   );
   if (!charged) return interaction.reply({ content: '보유 머니가 부족합니다.', flags: MessageFlags.Ephemeral });
   const game = {
-    id: createBlackjackGameId(),
+    id: createGameId(),
     discordId: interaction.user.id,
     username: interaction.user.username,
     deck: blackjackDeck(),
@@ -211,7 +201,7 @@ async function handleBlackjackCommand(interaction) {
   game.hands[0].cards.push(blackjackDraw(game));
   game.dealerCards.push(blackjackDraw(game));
   const completed = await blackjackSettleInitialNaturals(game);
-  if (!completed) addBlackjackGame(game);
+  if (!completed) blackjackGames.add(game);
   await interaction.reply({ embeds: [blackjackEmbed(game, { revealDealer: completed, completedHandIndex: completed ? 0 : null })], components: completed ? [] : blackjackButtons(game) });
 }
 

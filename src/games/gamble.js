@@ -3,30 +3,12 @@ const config = require('../config');
 const UserMoney = require('../models/UserMoney');
 const { parseAmount } = require('../utils/betting');
 const { moneyText, RESPONSIBLE_GAMBLING_STATUS } = require('../utils/common');
+const { createCooldownManager } = require('../utils/gameSession');
 
-const gambleCooldowns = new Map();
-
-function gambleCooldownRemainingSeconds(userId) {
-  const until = gambleCooldowns.get(String(userId));
-  if (!until) return 0;
-  if (until <= Date.now()) {
-    gambleCooldowns.delete(String(userId));
-    return 0;
-  }
-  return Math.ceil((until - Date.now()) / 1000);
-}
-
-function setGambleCooldown(userId, seconds) {
-  const key = String(userId);
-  const until = Date.now() + seconds * 1000;
-  gambleCooldowns.set(key, until);
-  setTimeout(() => {
-    if (gambleCooldowns.get(key) === until) gambleCooldowns.delete(key);
-  }, seconds * 1000 + 100);
-}
+const gambleCooldowns = createCooldownManager({ autoCleanup: true });
 
 async function performGamble(userId, username, amount) {
-  const remaining = gambleCooldownRemainingSeconds(userId);
+  const remaining = gambleCooldowns.getRemainingSeconds(userId);
   if (remaining > 0) {
     return { embeds: [new EmbedBuilder()
       .setColor(0xe67e22)
@@ -54,7 +36,7 @@ async function performGamble(userId, username, amount) {
   }
 
   const won = Math.random() < config.gambleWinChance;
-  setGambleCooldown(userId, config.gambleCooldownSeconds);
+  gambleCooldowns.set(userId, config.gambleCooldownSeconds);
 
   if (won) {
     const updated = await UserMoney.findOneAndUpdate(
