@@ -1,0 +1,26 @@
+const CUSTOM_IDS = {
+  meetSelect: 'ticket:meet',
+  raceSelect: 'ticket:race',
+  betTypeSelect: 'ticket:bet_type',
+  horsesInput: 'ticket:horses',
+  amountInput: 'ticket:amount',
+  modalPrefix: 'ticket:modal:',
+  schedulePrevPrefix: 'schedule:prev:',
+  scheduleNextPrefix: 'schedule:next:',
+  myTicketsPrevPrefix: 'mytickets:prev:',
+  myTicketsNextPrefix: 'mytickets:next:',
+  alertCancelConfirmPrefix: 'alert:cancel:confirm:',
+  alertCancelDismissPrefix: 'alert:cancel:dismiss:',
+  horseInfoSelectPrefix: 'horseinfo:select:',
+  raceAnalysisSelectPrefix: 'raceanalysis:select:',
+  raceAnalysisPrevPrefix: 'raceanalysis:prev:',
+  raceAnalysisNextPrefix: 'raceanalysis:next:',
+  ticketConfirmPrefix: 'ticket:confirm:',
+  ticketCancelPrefix: 'ticket:cancel:',
+  blackjackActionPrefix: 'blackjack:',
+  giftConfirmPrefix: 'gift:confirm:',
+  giftCancelPrefix: 'gift:cancel:',
+  shoeGameActionPrefix: 'shoegame:',
+};
+
+module.exports = CUSTOM_IDS;
