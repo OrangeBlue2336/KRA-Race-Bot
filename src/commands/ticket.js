@@ -14,6 +14,7 @@ const {
   TextInputStyle,
 } = require('discord.js');
 const config = require('../config');
+const kraApi = require('../services/kraApi');
 const Ticket = require('../models/Ticket');
 const UserMoney = require('../models/UserMoney');
 const CUSTOM_IDS = require('../utils/customIds');

@@ -239,154 +239,87 @@ async function handleDeveloperMoneyCommand(message) {
     : '대상 유저가 가입하지 않았거나 차감할 머니가 부족합니다.');
 }
 
+// 슬래시 커맨드 이름 → 핸들러 매핑 테이블. 새 커맨드를 추가하려면 여기에 한 줄만 추가하면 된다.
+const CHAT_INPUT_COMMAND_HANDLERS = {
+  가입: handleSignupCommand,
+  데일리: handleDailyCommand,
+  지갑: handleWalletCommand,
+  리더보드: handleLeaderboardCommand,
+  마권발매: handleTicketCommand,
+  내마권: handleMyTicketsCommand,
+  경마일정: handleScheduleCommand,
+  경주정보: handleRaceInfoCommand,
+  알림구독: handleAlertSubscribeCommand,
+  말정보: handleHorseInfoCommand,
+  도박: handleGambleCommand,
+  블랙잭: handleBlackjackCommand,
+  편자강화: handleShoeGameCommand,
+  돈내놔: handleMoneyGiveCommand,
+  선물: handleGiftCommand,
+};
+
+// 버튼 customId 접두사 → 핸들러 매핑 테이블. 순서는 무관 (접두사끼리 겹치지 않음).
+const BUTTON_HANDLERS = [
+  { prefix: CUSTOM_IDS.blackjackActionPrefix, handler: handleBlackjackAction },
+  { prefix: CUSTOM_IDS.shoeGameActionPrefix, handler: handleShoeGameAction },
+  { prefix: CUSTOM_IDS.raceAnalysisPrevPrefix, handler: handleRaceAnalysisInteraction },
+  { prefix: CUSTOM_IDS.raceAnalysisNextPrefix, handler: handleRaceAnalysisInteraction },
+  { prefix: CUSTOM_IDS.ticketConfirmPrefix, handler: (interaction) => handleTicketConfirmation(interaction, true) },
+  { prefix: CUSTOM_IDS.ticketCancelPrefix, handler: (interaction) => handleTicketConfirmation(interaction, false) },
+  { prefix: CUSTOM_IDS.schedulePrevPrefix, handler: handleScheduleButton },
+  { prefix: CUSTOM_IDS.scheduleNextPrefix, handler: handleScheduleButton },
+  { prefix: CUSTOM_IDS.myTicketsPrevPrefix, handler: handleMyTicketsButton },
+  { prefix: CUSTOM_IDS.myTicketsNextPrefix, handler: handleMyTicketsButton },
+  { prefix: CUSTOM_IDS.alertCancelConfirmPrefix, handler: handleAlertCancelButton },
+  { prefix: CUSTOM_IDS.alertCancelDismissPrefix, handler: handleAlertCancelButton },
+  { prefix: CUSTOM_IDS.giftConfirmPrefix, handler: (interaction) => handleGiftConfirmation(interaction, true) },
+  { prefix: CUSTOM_IDS.giftCancelPrefix, handler: (interaction) => handleGiftConfirmation(interaction, false) },
+];
+
+// 셀렉트 메뉴는 customId 전체가 정확히 일치하는 경우(meetSelect)와 접두사로 매칭하는 경우가 섞여 있어 테이블을 분리한다.
+const SELECT_MENU_EXACT_HANDLERS = {
+  [CUSTOM_IDS.meetSelect]: handleMeetSelect,
+};
+
+const SELECT_MENU_PREFIX_HANDLERS = [
+  { prefix: CUSTOM_IDS.horseInfoSelectPrefix, handler: handleHorseInfoSelect },
+  { prefix: CUSTOM_IDS.raceAnalysisSelectPrefix, handler: handleRaceAnalysisInteraction },
+];
+
+// 모달 제출도 동일한 패턴을 따르도록 테이블화
+const MODAL_SUBMIT_HANDLERS = [
+  { prefix: CUSTOM_IDS.modalPrefix, handler: handleTicketModal },
+];
+
+function findHandlerByPrefix(table, customId) {
+  const entry = table.find(({ prefix }) => customId.startsWith(prefix));
+  return entry ? entry.handler : null;
+}
+
 async function onInteractionCreate(interaction) {
   try {
-    if (interaction.isChatInputCommand() && interaction.commandName === '가입') {
-      await handleSignupCommand(interaction);
-      return;
-    }
-    if (interaction.isChatInputCommand() && interaction.commandName === '데일리') {
-      await handleDailyCommand(interaction);
-      return;
-    }
-    if (interaction.isChatInputCommand() && interaction.commandName === '지갑') {
-      await handleWalletCommand(interaction);
-      return;
-    }
-    if (interaction.isChatInputCommand() && interaction.commandName === '리더보드') {
-      await handleLeaderboardCommand(interaction);
-      return;
-    }
-    if (interaction.isChatInputCommand() && interaction.commandName === '마권발매') {
-      await handleTicketCommand(interaction);
+    if (interaction.isChatInputCommand()) {
+      const handler = CHAT_INPUT_COMMAND_HANDLERS[interaction.commandName];
+      if (handler) await handler(interaction);
       return;
     }
 
-    if (interaction.isChatInputCommand() && interaction.commandName === '내마권') {
-      await handleMyTicketsCommand(interaction);
+    if (interaction.isButton()) {
+      const handler = findHandlerByPrefix(BUTTON_HANDLERS, interaction.customId);
+      if (handler) await handler(interaction);
       return;
     }
 
-    if (interaction.isChatInputCommand() && interaction.commandName === '경마일정') {
-      await handleScheduleCommand(interaction);
+    if (interaction.isStringSelectMenu()) {
+      const handler = SELECT_MENU_EXACT_HANDLERS[interaction.customId]
+        || findHandlerByPrefix(SELECT_MENU_PREFIX_HANDLERS, interaction.customId);
+      if (handler) await handler(interaction);
       return;
     }
 
-    if (interaction.isChatInputCommand() && interaction.commandName === '경주정보') {
-      await handleRaceInfoCommand(interaction);
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === '알림구독') {
-      await handleAlertSubscribeCommand(interaction);
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === '말정보') {
-      await handleHorseInfoCommand(interaction);
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === '도박') {
-      await handleGambleCommand(interaction);
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === '블랙잭') {
-      await handleBlackjackCommand(interaction);
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === '편자강화') {
-      await handleShoeGameCommand(interaction);
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === '돈내놔') {
-      await handleMoneyGiveCommand(interaction);
-      return;
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === '선물') {
-      await handleGiftCommand(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId.startsWith(CUSTOM_IDS.blackjackActionPrefix)) {
-      await handleBlackjackAction(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId.startsWith(CUSTOM_IDS.shoeGameActionPrefix)) {
-      await handleShoeGameAction(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && (
-      interaction.customId.startsWith(CUSTOM_IDS.raceAnalysisPrevPrefix)
-      || interaction.customId.startsWith(CUSTOM_IDS.raceAnalysisNextPrefix)
-    )) {
-      await handleRaceAnalysisInteraction(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && (
-      interaction.customId.startsWith(CUSTOM_IDS.ticketConfirmPrefix)
-      || interaction.customId.startsWith(CUSTOM_IDS.ticketCancelPrefix)
-    )) {
-      await handleTicketConfirmation(interaction, interaction.customId.startsWith(CUSTOM_IDS.ticketConfirmPrefix));
-      return;
-    }
-
-    if (interaction.isButton() && (
-      interaction.customId.startsWith(CUSTOM_IDS.schedulePrevPrefix)
-      || interaction.customId.startsWith(CUSTOM_IDS.scheduleNextPrefix)
-    )) {
-      await handleScheduleButton(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && (
-      interaction.customId.startsWith(CUSTOM_IDS.myTicketsPrevPrefix)
-      || interaction.customId.startsWith(CUSTOM_IDS.myTicketsNextPrefix)
-    )) {
-      await handleMyTicketsButton(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && (
-      interaction.customId.startsWith(CUSTOM_IDS.alertCancelConfirmPrefix)
-      || interaction.customId.startsWith(CUSTOM_IDS.alertCancelDismissPrefix)
-    )) {
-      await handleAlertCancelButton(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && (
-      interaction.customId.startsWith(CUSTOM_IDS.giftConfirmPrefix)
-      || interaction.customId.startsWith(CUSTOM_IDS.giftCancelPrefix)
-    )) {
-      await handleGiftConfirmation(interaction, interaction.customId.startsWith(CUSTOM_IDS.giftConfirmPrefix));
-      return;
-    }
-
-    if (interaction.isStringSelectMenu() && interaction.customId === CUSTOM_IDS.meetSelect) {
-      await handleMeetSelect(interaction);
-      return;
-    }
-
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(CUSTOM_IDS.horseInfoSelectPrefix)) {
-      await handleHorseInfoSelect(interaction);
-      return;
-    }
-
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(CUSTOM_IDS.raceAnalysisSelectPrefix)) {
-      await handleRaceAnalysisInteraction(interaction);
-      return;
-    }
-
-    if (interaction.isModalSubmit() && interaction.customId.startsWith(CUSTOM_IDS.modalPrefix)) {
-      await handleTicketModal(interaction);
+    if (interaction.isModalSubmit()) {
+      const handler = findHandlerByPrefix(MODAL_SUBMIT_HANDLERS, interaction.customId);
+      if (handler) await handler(interaction);
     }
   } catch (error) {
     console.error('[interaction]', error);

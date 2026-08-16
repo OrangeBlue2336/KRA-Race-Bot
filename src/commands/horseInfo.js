@@ -1,6 +1,7 @@
 const {
   ActionRowBuilder,
   EmbedBuilder,
+  MessageFlags,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
