@@ -27,7 +27,6 @@ const {
   handleTicketCommand,
   handleMyTicketsCommand,
   handleMyTicketsButton,
-  handleMeetSelect,
   handleTicketModal,
   handleTicketConfirmation,
 } = require('./commands/ticket');
@@ -276,11 +275,6 @@ const BUTTON_HANDLERS = [
   { prefix: CUSTOM_IDS.giftCancelPrefix, handler: (interaction) => handleGiftConfirmation(interaction, false) },
 ];
 
-// 셀렉트 메뉴는 customId 전체가 정확히 일치하는 경우(meetSelect)와 접두사로 매칭하는 경우가 섞여 있어 테이블을 분리한다.
-const SELECT_MENU_EXACT_HANDLERS = {
-  [CUSTOM_IDS.meetSelect]: handleMeetSelect,
-};
-
 const SELECT_MENU_PREFIX_HANDLERS = [
   { prefix: CUSTOM_IDS.horseInfoSelectPrefix, handler: handleHorseInfoSelect },
   { prefix: CUSTOM_IDS.raceAnalysisSelectPrefix, handler: handleRaceAnalysisInteraction },
@@ -311,8 +305,7 @@ async function onInteractionCreate(interaction) {
     }
 
     if (interaction.isStringSelectMenu()) {
-      const handler = SELECT_MENU_EXACT_HANDLERS[interaction.customId]
-        || findHandlerByPrefix(SELECT_MENU_PREFIX_HANDLERS, interaction.customId);
+      const handler = findHandlerByPrefix(SELECT_MENU_PREFIX_HANDLERS, interaction.customId);
       if (handler) await handler(interaction);
       return;
     }
@@ -409,7 +402,6 @@ module.exports = {
   handleRaceInfoCommand,
   handleAlertSubscribeCommand,
   handleHorseInfoCommand,
-  handleMeetSelect,
   handleTicketModal,
   handleBlackjackCommand,
   setResponsibleGamblingPresence,

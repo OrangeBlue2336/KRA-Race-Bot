@@ -8,12 +8,10 @@ const {
 const UserMoney = require('../models/UserMoney');
 const CUSTOM_IDS = require('../utils/customIds');
 const { moneyText, displayUsername } = require('../utils/common');
+const { createGameId, createGameSessionStore } = require('../utils/gameSession');
 
-const pendingGifts = new Map();
-
-function createGiftId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
+const GIFT_TTL_MS = 5 * 60_000;
+const pendingGifts = createGameSessionStore(GIFT_TTL_MS);
 
 async function handleGiftCommand(interaction) {
   const amount = interaction.options.getInteger('머니', true);
@@ -53,15 +51,14 @@ async function handleGiftCommand(interaction) {
     return;
   }
 
-  const giftId = createGiftId();
-  pendingGifts.set(giftId, {
+  const giftId = createGameId();
+  pendingGifts.add({
+    id: giftId,
     fromId: interaction.user.id,
     toId: target.id,
     toUsername: target.username,
     amount,
-    expiresAt: Date.now() + 5 * 60_000,
   });
-  setTimeout(() => pendingGifts.delete(giftId), 5 * 60_000 + 100);
 
   await interaction.reply({
     embeds: [new EmbedBuilder()

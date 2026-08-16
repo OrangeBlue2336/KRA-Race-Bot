@@ -2,21 +2,9 @@ const { EmbedBuilder, MessageFlags } = require('discord.js');
 const config = require('../config');
 const UserMoney = require('../models/UserMoney');
 const { moneyText } = require('../utils/common');
+const { createCooldownManager } = require('../utils/gameSession');
 
-const moneyGiveCooldowns = new Map();
-
-function moneyGiveCooldownUntil(userId) {
-  return moneyGiveCooldowns.get(String(userId)) || 0;
-}
-
-function setMoneyGiveCooldown(userId, seconds) {
-  const key = String(userId);
-  const until = Date.now() + seconds * 1000;
-  moneyGiveCooldowns.set(key, until);
-  setTimeout(() => {
-    if (moneyGiveCooldowns.get(key) === until) moneyGiveCooldowns.delete(key);
-  }, seconds * 1000 + 100);
-}
+const moneyGiveCooldown = createCooldownManager({ autoCleanup: true });
 
 function randomMoneyGiveAmount() {
   const { moneyGiveMinAmount, moneyGiveMaxAmount, moneyGiveStep } = config;
@@ -25,7 +13,7 @@ function randomMoneyGiveAmount() {
 }
 
 async function handleMoneyGiveCommand(interaction) {
-  const until = moneyGiveCooldownUntil(interaction.user.id);
+  const until = moneyGiveCooldown.getUntil(interaction.user.id);
   if (until > Date.now()) {
     const unixSeconds = Math.floor(until / 1000);
     await interaction.reply({
@@ -45,7 +33,7 @@ async function handleMoneyGiveCommand(interaction) {
   }
 
   const amount = randomMoneyGiveAmount();
-  setMoneyGiveCooldown(interaction.user.id, config.moneyGiveCooldownSeconds);
+  moneyGiveCooldown.set(interaction.user.id, config.moneyGiveCooldownSeconds);
   const updated = await UserMoney.findOneAndUpdate(
     { discordId: interaction.user.id },
     { $inc: { balance: amount }, $set: { username: interaction.user.username } },

@@ -118,7 +118,6 @@ function buildMyTicketsEmbeds(tickets) {
 }
 
 function availableRacesFor(meetCode) {
-  const meet = config.MEET_BY_CODE[meetCode];
   const rcDate = todayKST();
   const races = getCachedSchedule(meetCode, rcDate) || [];
 
@@ -126,22 +125,6 @@ function availableRacesFor(meetCode) {
     .filter((race) => String(race.rcDate) === rcDate)
     .filter((race) => !isPastTicketClose(rcDate, race.schStTime, config.ticketCloseBeforeStartMinutes))
     .sort((a, b) => Number(a.rcNo) - Number(b.rcNo));
-}
-
-function createMeetSelectRow() {
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId(CUSTOM_IDS.meetSelect)
-    .setPlaceholder('경마장을 선택하세요')
-    .addOptions(
-      config.MEETS.map((meet) => (
-        new StringSelectMenuOptionBuilder()
-          .setLabel(meet.name)
-          .setDescription(meet.description)
-          .setValue(meet.code)
-      )),
-    );
-
-  return new ActionRowBuilder().addComponents(menu);
 }
 
 function createTicketModal(meetCode, races) {
@@ -356,39 +339,6 @@ async function handleMyTicketsButton(interaction) {
   });
 }
 
-async function handleMeetSelect(interaction) {
-  const meetCode = interaction.values[0];
-  const meet = config.MEET_BY_CODE[meetCode];
-  if (!meet) {
-    await interaction.update({ content: '알 수 없는 경마장입니다.', components: [] });
-    return;
-  }
-
-  let races = availableRacesFor(meetCode);
-  if (races.length === 0) {
-    try {
-      await loadSchedule(meet);
-      races = availableRacesFor(meetCode);
-    } catch (error) {
-      await interaction.update({
-        content: `경주 일정을 불러오지 못했습니다: ${error.message}`,
-        components: [],
-      });
-      return;
-    }
-  }
-
-  if (races.length === 0) {
-    await interaction.update({
-      content: `${meet.name} 경마장에 현재 베팅 가능한 경주가 없습니다. 오늘 경주가 없거나 발매 마감 시간이 지났습니다.`,
-      components: [],
-    });
-    return;
-  }
-
-  await interaction.showModal(createTicketModal(meetCode, races));
-}
-
 async function handleTicketModal(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -512,27 +462,6 @@ async function handleTicketModal(interaction) {
     embeds: [ticketConfirmationEmbed(ticket, nextRaceBetAmount)],
     components: [ticketConfirmationRow(ticket.id)],
   });
-  return;
-
-  checkTicketAlerts(interaction.client, ticket).catch((error) => {
-    console.error('[ticket alert check]', error);
-  });
-
-  const embed = new EmbedBuilder()
-    .setColor(0x3d8af7)
-    .setTitle('마권 발매 완료')
-    .setDescription('같은 경주에 10만머니까지 추가 발매할 수 있습니다. 경주 출발 5분 후부터 결과를 확인해 DM으로 알려드립니다.')
-    .addFields(
-      { name: '경마장', value: ticket.meet, inline: true },
-      { name: '경주', value: `${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: true },
-      { name: '승식', value: ticket.betType, inline: true },
-      { name: '마번', value: ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`, inline: true },
-      { name: '베팅 금액', value: `${ticket.amount.toLocaleString()}머니`, inline: true },
-      { name: '이 경주 누적 베팅', value: `${nextRaceBetAmount.toLocaleString()}머니 / ${config.maxRaceBetAmount.toLocaleString()}머니`, inline: true },
-    )
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [embed] });
 }
 
 async function handleTicketConfirmation(interaction, confirmed) {
@@ -616,7 +545,6 @@ module.exports = {
   handleTicketCommand,
   handleMyTicketsCommand,
   handleMyTicketsButton,
-  handleMeetSelect,
   handleTicketModal,
   handleTicketConfirmation,
 };

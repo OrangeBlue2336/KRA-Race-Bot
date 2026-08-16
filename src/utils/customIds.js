@@ -1,5 +1,4 @@
 const CUSTOM_IDS = {
-  meetSelect: 'ticket:meet',
   raceSelect: 'ticket:race',
   betTypeSelect: 'ticket:bet_type',
   horsesInput: 'ticket:horses',
