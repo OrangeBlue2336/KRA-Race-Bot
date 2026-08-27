@@ -7,6 +7,7 @@ const {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } = require('discord.js');
+const mongoose = require('mongoose');
 const config = require('../config');
 const Stock = require('../models/Stock');
 const StockHolding = require('../models/StockHolding');
@@ -17,6 +18,21 @@ const { renderStockChart } = require('../utils/stockChart');
 
 function stockCodes() {
   return config.STOCKS.map((stock) => stock.code);
+}
+
+// 잔액과 보유 주식은 반드시 함께 바뀌어야 한다. 거래 중 어느 한 쪽의 DB 작업이
+// 실패하면 withTransaction이 두 변경을 모두 롤백한다.
+async function runStockTransaction(work) {
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      result = await work(session);
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
 }
 
 async function loadStocks() {
@@ -156,39 +172,46 @@ async function handleStockBuyCommand(interaction) {
     return;
   }
 
-  const account = await UserMoney.findOne({ discordId: interaction.user.id }).lean();
-  if (!account) {
+  const cost = stock.price * quantity;
+  const trade = await runStockTransaction(async (session) => {
+    const account = await UserMoney.findOne({ discordId: interaction.user.id }).session(session).lean();
+    if (!account) return { status: 'notRegistered' };
+
+    // 현재 잔액을 트랜잭션 안에서 다시 읽어, 동시에 실행된 거래에도 한도를 정확히 적용한다.
+    const limit = Math.floor(account.balance * config.stockHoldingLimitRatio);
+    if (cost > limit) return { status: 'overLimit', limit };
+
+    const updatedAccount = await UserMoney.findOneAndUpdate(
+      { discordId: interaction.user.id, balance: { $gte: cost } },
+      { $inc: { balance: -cost }, $set: { username: interaction.user.username } },
+      { new: true, session },
+    );
+    if (!updatedAccount) return { status: 'insufficientMoney' };
+
+    const holding = await StockHolding.findOneAndUpdate(
+      { discordId: interaction.user.id, stockCode },
+      { $inc: { quantity, totalCost: cost }, $set: { username: interaction.user.username } },
+      { upsert: true, new: true, session },
+    );
+    return { status: 'success', updatedAccount, holding };
+  });
+
+  if (trade.status === 'notRegistered') {
     await interaction.reply({ content: '주식을 거래하려면 먼저 `/가입` 명령어를 실행해주세요.', flags: MessageFlags.Ephemeral });
     return;
   }
-
-  const cost = stock.price * quantity;
-  // 방식 B: "현재 잔액의 최대 N%까지만 한 번에 매수 가능" (기본 50%, config.stockHoldingLimitRatio)
-  const limit = Math.floor(account.balance * config.stockHoldingLimitRatio);
-  if (cost > limit) {
-    const maxQuantity = Math.max(Math.floor(limit / stock.price), 0);
+  if (trade.status === 'overLimit') {
+    const maxQuantity = Math.max(Math.floor(trade.limit / stock.price), 0);
     await interaction.reply({
-      content: `한 번에 매수 가능한 금액은 현재 잔액의 ${Math.round(config.stockHoldingLimitRatio * 100)}%(${moneyText(limit)})까지입니다. 이 종목은 최대 ${maxQuantity.toLocaleString()}주까지 매수할 수 있습니다.`,
+      content: `한 번에 매수 가능한 금액은 현재 잔액의 ${Math.round(config.stockHoldingLimitRatio * 100)}%(${moneyText(trade.limit)})까지입니다. 이 종목은 최대 ${maxQuantity.toLocaleString()}주까지 매수할 수 있습니다.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
-
-  const updatedAccount = await UserMoney.findOneAndUpdate(
-    { discordId: interaction.user.id, balance: { $gte: cost } },
-    { $inc: { balance: -cost }, $set: { username: interaction.user.username } },
-    { new: true },
-  );
-  if (!updatedAccount) {
+  if (trade.status === 'insufficientMoney') {
     await interaction.reply({ content: '보유 머니가 부족합니다.', flags: MessageFlags.Ephemeral });
     return;
   }
-
-  const holding = await StockHolding.findOneAndUpdate(
-    { discordId: interaction.user.id, stockCode },
-    { $inc: { quantity, totalCost: cost }, $set: { username: interaction.user.username } },
-    { upsert: true, new: true },
-  );
 
   await interaction.reply({
     embeds: [new EmbedBuilder()
@@ -196,9 +219,9 @@ async function handleStockBuyCommand(interaction) {
       .setTitle(`✅ ${definition.name} 매수 완료`)
       .setDescription(`${moneyText(stock.price)} × ${quantity.toLocaleString()}주 = **${moneyText(cost)}**`)
       .addFields(
-        { name: '보유 수량', value: `${holding.quantity.toLocaleString()}주`, inline: true },
-        { name: '평균 단가', value: moneyText(Math.round(holding.totalCost / holding.quantity)), inline: true },
-        { name: '현재 보유 머니', value: moneyText(updatedAccount.balance), inline: true },
+        { name: '보유 수량', value: `${trade.holding.quantity.toLocaleString()}주`, inline: true },
+        { name: '평균 단가', value: moneyText(Math.round(trade.holding.totalCost / trade.holding.quantity)), inline: true },
+        { name: '현재 보유 머니', value: moneyText(trade.updatedAccount.balance), inline: true },
       )
       .setTimestamp()],
   });
@@ -219,39 +242,45 @@ async function handleStockSellCommand(interaction) {
     return;
   }
 
-  const holding = await StockHolding.findOne({ discordId: interaction.user.id, stockCode }).lean();
-  if (!holding || holding.quantity < quantity) {
+  const proceeds = stock.price * quantity;
+  const trade = await runStockTransaction(async (session) => {
+    const holding = await StockHolding.findOne({ discordId: interaction.user.id, stockCode }).session(session).lean();
+    if (!holding || holding.quantity < quantity) {
+      return { status: 'insufficientQuantity', quantity: holding?.quantity || 0 };
+    }
+
+    const avgPrice = holding.totalCost / holding.quantity;
+    const costBasisRemoved = Math.round(avgPrice * quantity);
+    const updatedHolding = await StockHolding.findOneAndUpdate(
+      { _id: holding._id, quantity: { $gte: quantity } },
+      { $inc: { quantity: -quantity, totalCost: -costBasisRemoved } },
+      { new: true, session },
+    );
+    if (!updatedHolding) return { status: 'insufficientQuantity', quantity: 0 };
+
+    if (updatedHolding.quantity <= 0) {
+      await StockHolding.deleteOne({ _id: updatedHolding._id }, { session });
+    }
+
+    const account = await UserMoney.findOneAndUpdate(
+      { discordId: interaction.user.id },
+      { $inc: { balance: proceeds }, $set: { username: interaction.user.username } },
+      { new: true, session },
+    );
+    if (!account) throw new Error('주식 보유 정보와 연결된 사용자 계정을 찾을 수 없습니다.');
+
+    return { status: 'success', updatedHolding, account, costBasisRemoved };
+  });
+
+  if (trade.status === 'insufficientQuantity') {
     await interaction.reply({
-      content: `보유 수량이 부족합니다. (보유: ${holding ? holding.quantity.toLocaleString() : 0}주)`,
+      content: `보유 수량이 부족합니다. (보유: ${trade.quantity.toLocaleString()}주)`,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const avgPrice = holding.totalCost / holding.quantity;
-  const costBasisRemoved = Math.round(avgPrice * quantity);
-  const proceeds = stock.price * quantity;
-
-  const updatedHolding = await StockHolding.findOneAndUpdate(
-    { discordId: interaction.user.id, stockCode, quantity: { $gte: quantity } },
-    { $inc: { quantity: -quantity, totalCost: -costBasisRemoved } },
-    { new: true },
-  );
-  if (!updatedHolding) {
-    await interaction.reply({ content: '보유 수량이 부족합니다.', flags: MessageFlags.Ephemeral });
-    return;
-  }
-  if (updatedHolding.quantity <= 0) {
-    await StockHolding.deleteOne({ _id: updatedHolding._id });
-  }
-
-  const account = await UserMoney.findOneAndUpdate(
-    { discordId: interaction.user.id },
-    { $inc: { balance: proceeds }, $set: { username: interaction.user.username } },
-    { new: true },
-  );
-
-  const profit = proceeds - costBasisRemoved;
+  const profit = proceeds - trade.costBasisRemoved;
   await interaction.reply({
     embeds: [new EmbedBuilder()
       .setColor(profit >= 0 ? 0x2ecc71 : 0xe74c3c)
@@ -259,8 +288,8 @@ async function handleStockSellCommand(interaction) {
       .setDescription(`${moneyText(stock.price)} × ${quantity.toLocaleString()}주 = **${moneyText(proceeds)}**`)
       .addFields(
         { name: '실현 손익', value: `${profit >= 0 ? '+' : ''}${moneyText(profit)}`, inline: true },
-        { name: '남은 보유 수량', value: `${Math.max(updatedHolding.quantity, 0).toLocaleString()}주`, inline: true },
-        { name: '현재 보유 머니', value: moneyText(account.balance), inline: true },
+        { name: '남은 보유 수량', value: `${Math.max(trade.updatedHolding.quantity, 0).toLocaleString()}주`, inline: true },
+        { name: '현재 보유 머니', value: moneyText(trade.account.balance), inline: true },
       )
       .setTimestamp()],
   });
