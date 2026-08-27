@@ -79,6 +79,17 @@ const SHOE_GAME_STAGES = [
   { level: 10, successChance: 0.20, multiplier: 100, grade: '무지개 편자', image: '무지개_편자.png' },
 ];
 
+// 종목별 변동성은 여기서 한 번에 조정할 수 있다. 이름/초기가는 플레이스홀더이며 나중에 쉽게 교체 가능.
+const STOCKS = [
+  { code: '1', name: 'RS 제일제당', initialPrice: 50_000, minChangePercent: 1, maxChangePercent: 2, color: '#8541a0' },
+  { code: '2', name: '로얄 메지로', initialPrice: 30_000, minChangePercent: 1.5, maxChangePercent: 3, color: '#dc96fa' },
+  { code: '3', name: '슬립앤스키밍', initialPrice: 15_000, minChangePercent: 2.5, maxChangePercent: 4.5, color: '#2ecc71' },
+  { code: '4', name: '비브제과', initialPrice: 10_000, minChangePercent: 4, maxChangePercent: 7, color: '#0fe2f1' },
+  { code: '5', name: '황금메밀', initialPrice: 8_000, minChangePercent: 6, maxChangePercent: 10, color: '#e74c3c' },
+];
+
+const STOCK_BY_CODE = Object.fromEntries(STOCKS.map((stock) => [stock.code, stock]));
+
 module.exports = {
   discordToken: process.env.DISCORD_TOKEN,
   discordClientId: process.env.DISCORD_CLIENT_ID,
@@ -111,9 +122,16 @@ module.exports = {
   port: Number(process.env.PORT || 3000),
   keepAliveUrl: process.env.KEEP_ALIVE_URL || renderExternalUrl,
   keepAliveIntervalMs: Number(process.env.KEEP_ALIVE_INTERVAL_MS || 10 * 60_000),
+  stockPriceIntervalMs: Number(process.env.STOCK_PRICE_INTERVAL_MS || 60_000),
+  stockHoldingLimitRatio: Number(process.env.STOCK_HOLDING_LIMIT_RATIO || 0.5),
+  stockMinPrice: Number(process.env.STOCK_MIN_PRICE || 1),
+  // 그래프에 보여줄 최근 데이터 개수. 1분마다 1개씩 쌓이므로 30 = 최근 30분.
+  stockHistoryLength: Number(process.env.STOCK_HISTORY_LENGTH || 30),
   BET_TYPES,
   BET_TYPE_BY_NAME,
   MEETS,
   MEET_BY_CODE,
   SHOE_GAME_STAGES,
+  STOCKS,
+  STOCK_BY_CODE,
 };

@@ -20,6 +20,7 @@ const CUSTOM_IDS = {
   giftConfirmPrefix: 'gift:confirm:',
   giftCancelPrefix: 'gift:cancel:',
   shoeGameActionPrefix: 'shoegame:',
+  stockQuoteSelectPrefix: 'stock:quote:select',
 };
 
 module.exports = CUSTOM_IDS;

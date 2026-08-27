@@ -14,6 +14,7 @@ const UserMoney = require('./models/UserMoney');
 const { startAlertWorker } = require('./services/alertService');
 const { startKeepAlive } = require('./services/keepAliveServer');
 const { startSettlementWorker } = require('./services/settlementService');
+const { startStockPriceWorker } = require('./services/stockPriceService');
 const { nowKST, todayKST } = require('./utils/time');
 const CUSTOM_IDS = require('./utils/customIds');
 const { RESPONSIBLE_GAMBLING_STATUS, isDeveloper, moneyText, displayUsername } = require('./utils/common');
@@ -22,6 +23,16 @@ const { handleBlackjackCommand, handleBlackjackAction } = require('./games/black
 const { handleShoeGameCommand, handleShoeGameAction } = require('./games/shoeGame');
 const { handleGiftCommand, handleGiftConfirmation } = require('./games/gift');
 const { handleMoneyGiveCommand } = require('./games/moneyGive');
+const {
+  getCommandData: getStockCommandData,
+  handleStockQuoteCommand,
+  handleStockQuoteSelect,
+  handleStockBuyCommand,
+  handleStockSellCommand,
+  handleMyStocksCommand,
+} = require('./games/stock');
+const Stock = require('./models/Stock');
+const StockHolding = require('./models/StockHolding');
 const {
   getCommandData: getTicketCommandData,
   handleTicketCommand,
@@ -85,6 +96,7 @@ function getCommandData() {
     ...getRaceInfoCommandData(),
     ...getAlertCommandData(),
     ...getHorseInfoCommandData(),
+    ...getStockCommandData(),
     new SlashCommandBuilder()
       .setName('도박')
       .setDescription('도박을 통해 머니를 얻거나 잃습니다. (3초 쿨다운, 성공 확률 50%)')
@@ -255,6 +267,10 @@ const CHAT_INPUT_COMMAND_HANDLERS = {
   편자강화: handleShoeGameCommand,
   돈내놔: handleMoneyGiveCommand,
   선물: handleGiftCommand,
+  주식시세: handleStockQuoteCommand,
+  주식매수: handleStockBuyCommand,
+  주식매도: handleStockSellCommand,
+  내주식: handleMyStocksCommand,
 };
 
 // 버튼 customId 접두사 → 핸들러 매핑 테이블. 순서는 무관 (접두사끼리 겹치지 않음).
@@ -278,6 +294,7 @@ const BUTTON_HANDLERS = [
 const SELECT_MENU_PREFIX_HANDLERS = [
   { prefix: CUSTOM_IDS.horseInfoSelectPrefix, handler: handleHorseInfoSelect },
   { prefix: CUSTOM_IDS.raceAnalysisSelectPrefix, handler: handleRaceAnalysisInteraction },
+  { prefix: CUSTOM_IDS.stockQuoteSelectPrefix, handler: handleStockQuoteSelect },
 ];
 
 // 모달 제출도 동일한 패턴을 따르도록 테이블화
@@ -342,6 +359,8 @@ async function ensureDatabaseIndexes() {
   await Ticket.createIndexes();
   await UserMoney.createIndexes();
   await AlertSubscription.createIndexes();
+  await Stock.createIndexes();
+  await StockHolding.createIndexes();
 }
 
 async function main() {
@@ -370,6 +389,7 @@ async function main() {
     setResponsibleGamblingPresence(client);
     startSettlementWorker(client);
     startAlertWorker(client);
+    startStockPriceWorker();
   });
 
   client.on('interactionCreate', onInteractionCreate);
