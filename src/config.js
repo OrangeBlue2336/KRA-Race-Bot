@@ -79,13 +79,14 @@ const SHOE_GAME_STAGES = [
   { level: 10, successChance: 0.20, multiplier: 100, grade: '무지개 편자', image: '무지개_편자.png' },
 ];
 
-// 종목별 변동성은 여기서 한 번에 조정할 수 있다. 이름/초기가는 플레이스홀더이며 나중에 쉽게 교체 가능.
+// 종목별 변동성은 여기서 한 번에 조정할 수 있다.
+// 가격은 initialPrice를 중심으로 움직이며, 각 종목의 허용 가격 범위를 벗어나지 않는다.
 const STOCKS = [
-  { code: '1', name: 'RS 제일제당', initialPrice: 50_000, minChangePercent: 1, maxChangePercent: 2, color: '#8541a0' },
-  { code: '2', name: '로얄 메지로', initialPrice: 30_000, minChangePercent: 1.5, maxChangePercent: 3, color: '#dc96fa' },
-  { code: '3', name: '슬립앤스키밍', initialPrice: 15_000, minChangePercent: 2.5, maxChangePercent: 4.5, color: '#2ecc71' },
-  { code: '4', name: '비브제과', initialPrice: 10_000, minChangePercent: 4, maxChangePercent: 7, color: '#0fe2f1' },
-  { code: '5', name: '황금메밀', initialPrice: 8_000, minChangePercent: 6, maxChangePercent: 10, color: '#e74c3c' },
+  { code: '1', name: 'RS 제일제당', initialPrice: 50_000, minChangePercent: 0.05, maxChangePercent: 0.15, minPriceRatio: 0.6, maxPriceRatio: 1.6, color: '#8541a0' },
+  { code: '2', name: '로얄 메지로', initialPrice: 30_000, minChangePercent: 0.08, maxChangePercent: 0.22, minPriceRatio: 0.6, maxPriceRatio: 1.6, color: '#dc96fa' },
+  { code: '3', name: '슬립앤스키밍', initialPrice: 15_000, minChangePercent: 0.12, maxChangePercent: 0.35, minPriceRatio: 0.6, maxPriceRatio: 1.6, color: '#2ecc71' },
+  { code: '4', name: '비브제과', initialPrice: 10_000, minChangePercent: 0.18, maxChangePercent: 0.5, minPriceRatio: 0.6, maxPriceRatio: 1.6, color: '#0fe2f1' },
+  { code: '5', name: '황금메밀', initialPrice: 8_000, minChangePercent: 0.25, maxChangePercent: 0.7, minPriceRatio: 0.6, maxPriceRatio: 1.6, color: '#e74c3c' },
 ];
 
 const STOCK_BY_CODE = Object.fromEntries(STOCKS.map((stock) => [stock.code, stock]));
@@ -125,6 +126,9 @@ module.exports = {
   stockPriceIntervalMs: Number(process.env.STOCK_PRICE_INTERVAL_MS || 60_000),
   stockHoldingLimitRatio: Number(process.env.STOCK_HOLDING_LIMIT_RATIO || 0.5),
   stockMinPrice: Number(process.env.STOCK_MIN_PRICE || 1),
+  // 현재가와 초기값의 차이(%)에 이 비율을 곱해 다음 틱의 기준가 복귀 폭으로 사용한다.
+  stockMeanReversionStrength: Number(process.env.STOCK_MEAN_REVERSION_STRENGTH || 0.01),
+  stockMaxMeanReversionPercent: Number(process.env.STOCK_MAX_MEAN_REVERSION_PERCENT || 0.5),
   // 그래프에 보여줄 최근 데이터 개수. 1분마다 1개씩 쌓이므로 30 = 최근 30분.
   stockHistoryLength: Number(process.env.STOCK_HISTORY_LENGTH || 30),
   BET_TYPES,

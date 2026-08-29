@@ -24,14 +24,26 @@ async function ensureStocksSeeded() {
   }
 }
 
-// 종목별 변동성(definition)을 기반으로 다음 가격을 계산한다.
-// minChangePercent~maxChangePercent 사이의 랜덤워크만 적용한다 (급등락 이벤트 없음).
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+// 종목별 변동성과 기준가 복귀를 조합해 다음 가격을 계산한다.
+// 순수 랜덤워크는 변동성이 클수록 장기적으로 바닥에 쏠리므로, initialPrice에서
+// 멀어진 정도에 비례한 작은 보정과 종목별 가격 밴드를 함께 적용한다.
 function nextPrice(stock, definition) {
   const direction = Math.random() < 0.5 ? -1 : 1;
-  const percent = randomBetween(definition.minChangePercent, definition.maxChangePercent) * direction;
-  const raw = Math.round(stock.price * (1 + percent / 100));
-  const price = Math.max(config.stockMinPrice, raw);
-  return price;
+  const randomPercent = randomBetween(definition.minChangePercent, definition.maxChangePercent) * direction;
+  const distanceFromInitialPercent = ((definition.initialPrice - stock.price) / definition.initialPrice) * 100;
+  const meanReversionPercent = clamp(
+    distanceFromInitialPercent * config.stockMeanReversionStrength,
+    -config.stockMaxMeanReversionPercent,
+    config.stockMaxMeanReversionPercent,
+  );
+  const raw = Math.round(stock.price * (1 + (randomPercent + meanReversionPercent) / 100));
+  const minPrice = Math.max(config.stockMinPrice, Math.round(definition.initialPrice * definition.minPriceRatio));
+  const maxPrice = Math.round(definition.initialPrice * definition.maxPriceRatio);
+  return clamp(raw, minPrice, maxPrice);
 }
 
 async function tickStock(definition) {
@@ -74,4 +86,5 @@ module.exports = {
   startStockPriceWorker,
   ensureStocksSeeded,
   tickAllStocks,
+  nextPrice,
 };
