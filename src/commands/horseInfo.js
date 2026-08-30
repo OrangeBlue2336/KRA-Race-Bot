@@ -109,6 +109,11 @@ async function handleHorseInfoCommand(interaction) {
     return;
   }
 
+  if (horses.length >= 10) {
+    await interaction.editReply(`'${horseName}' 검색 결과가 10마리 이상입니다. 말 이름을 더 자세히 입력해 다시 검색해주세요.`);
+    return;
+  }
+
   if (horses.length === 1) {
     await interaction.editReply({ embeds: [buildHorseInfoEmbed(horses[0])] });
     return;

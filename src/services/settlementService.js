@@ -140,8 +140,8 @@ async function fetchRaceSettlementData(apiMeet, rcDate, rcNo, apiCache) {
 
   const promise = (async () => {
     const [raceResults, summary] = await Promise.all([
-      kraApi.getRaceResult(apiMeet, rcDate, rcNo),
-      kraApi.getRaceSummaryResult(apiMeet, rcDate, rcNo),
+      kraApi.getRaceResult(apiMeet, rcDate, rcNo, '마권 정산 경주 결과 확인'),
+      kraApi.getRaceSummaryResult(apiMeet, rcDate, rcNo, '마권 정산 결과 요약 확인'),
     ]);
 
     const top3 = raceResults
@@ -155,7 +155,7 @@ async function fetchRaceSettlementData(apiMeet, rcDate, rcNo, apiCache) {
         plcOdds: Number(result.plcOdds || 0),
       }));
 
-    const oddsItems = summary ? [] : await kraApi.getIntegratedOdds(apiMeet, rcDate, rcNo);
+    const oddsItems = summary ? [] : await kraApi.getIntegratedOdds(apiMeet, rcDate, rcNo, '마권 정산 배당률 확인');
     const settlementSummary = summary || buildSummaryFromIntegratedOdds(top3, oddsItems);
 
     return { top3, settlementSummary };

@@ -394,7 +394,7 @@ async function handleTicketModal(interaction) {
     }
 
     try {
-      entries = await kraApi.getEntryInfo(meet.apiMeet, rcDate, rcNo);
+      entries = await kraApi.getEntryInfo(meet.apiMeet, rcDate, rcNo, '마권 발매 출전표 확인');
       dusu = entries.length ? Number(entries[0].dusu || entries.length) : 0;
       if (entries.length === 0 && !parsedHorses.isTest) {
         errors.push(`${meet.name} ${rcNo}경주 출전 정보를 찾을 수 없습니다.`);

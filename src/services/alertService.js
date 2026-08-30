@@ -50,8 +50,8 @@ async function fetchAlertItems(alertType, ticket, apiCache = new Map()) {
   if (apiCache.has(cacheKey)) return apiCache.get(cacheKey);
 
   const items = alertType === ALERT_TYPES.JOCKEY_CHANGE.value
-    ? await kraApi.getJockeyChanges(apiMeet, ticket.rcDate, ticket.rcNo)
-    : await kraApi.getRaceHorseCancels(apiMeet, ticket.rcDate, ticket.rcNo);
+    ? await kraApi.getJockeyChanges(apiMeet, ticket.rcDate, ticket.rcNo, '마권 알림 기수 변경 확인')
+    : await kraApi.getRaceHorseCancels(apiMeet, ticket.rcDate, ticket.rcNo, '마권 알림 출전 취소 확인');
 
   apiCache.set(cacheKey, items);
   return items;

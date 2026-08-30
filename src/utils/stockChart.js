@@ -1,5 +1,6 @@
 const path = require('path');
 const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+const { KST_ZONE } = require('./time');
 
 // 프로젝트에 내장된 한글 폰트를 등록한다. 서버(OS)에 한글 폰트가 없어도
 // 그래프의 한글(종목명 등)이 네모(□)로 깨지지 않도록 하기 위함.
@@ -39,9 +40,14 @@ function niceStep(range, targetSteps = 6) {
 
 function formatTime(value) {
   const date = new Date(value);
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: KST_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value: part }) => [type, part]));
+  return `${values.hour}:${values.minute}`;
 }
 
 // stock: { name, price, priceHistory: [{ price, at }] }, color: '#rrggbb'

@@ -69,7 +69,7 @@ async function getDisplayedTrackInfo(meet, rcDate, rcNo) {
   const trackRaceNo = String(rcDate) === todayKST() && requestedRaceNo > 1
     ? requestedRaceNo - 1
     : requestedRaceNo;
-  return kraApi.getTrackInfo(meet.apiMeet, rcDate, trackRaceNo);
+  return kraApi.getTrackInfo(meet.apiMeet, rcDate, trackRaceNo, '경주 정보 주로 조회');
 }
 
 function raceAnalysisContext(userId, meetCode, rcDate, rcNo, index) {
@@ -133,15 +133,15 @@ function buildRaceAnalysisEmbed(meet, rcDate, rcNo, entry, horse, jockey, traine
 
 async function buildRaceAnalysisMessage(context) {
   const meet = config.MEET_BY_CODE[context.meetCode];
-  const entries = await kraApi.getEntryInfo(meet.apiMeet, context.rcDate, context.rcNo);
+  const entries = await kraApi.getEntryInfo(meet.apiMeet, context.rcDate, context.rcNo, '경주 분석 출전표 조회');
   const index = Math.min(Math.max(context.index, 0), entries.length - 1);
   const entry = entries[index];
   if (!entry) return { content: '출전마 정보를 다시 조회하지 못했습니다.', embeds: [], components: [] };
   const [horse, jockey, trainer, weight, trackInfo] = await Promise.all([
-    kraApi.getHorseInfoByNo(entry.hrNo),
-    kraApi.getJockeyResult(meet.apiMeet, entry.jkNo),
-    kraApi.getTrainerInfo(meet.apiMeet, entry.trNo),
-    kraApi.getEntryHorseWeightInfo(meet.apiMeet, context.rcDate, entry.hrNo),
+    kraApi.getHorseInfoByNo(entry.hrNo, '경주 분석 말 정보 조회'),
+    kraApi.getJockeyResult(meet.apiMeet, entry.jkNo, '경주 분석 기수 성적 조회'),
+    kraApi.getTrainerInfo(meet.apiMeet, entry.trNo, '경주 분석 조교사 정보 조회'),
+    kraApi.getEntryHorseWeightInfo(meet.apiMeet, context.rcDate, entry.hrNo, '경주 분석 마체중 조회'),
     getDisplayedTrackInfo(meet, context.rcDate, context.rcNo),
   ]);
   const normalizedContext = { ...context, index };
@@ -167,8 +167,8 @@ async function handleRaceInfoCommand(interaction) {
   }
 
   const [entries, cancels, trackInfo] = await Promise.all([
-    kraApi.getEntryInfo(meet.apiMeet, rcDate, rcNo),
-    kraApi.getRaceHorseCancels(meet.apiMeet, rcDate, rcNo),
+    kraApi.getEntryInfo(meet.apiMeet, rcDate, rcNo, '경주 정보 출전표 조회'),
+    kraApi.getRaceHorseCancels(meet.apiMeet, rcDate, rcNo, '경주 정보 출전 취소 조회'),
     getDisplayedTrackInfo(meet, rcDate, rcNo),
   ]);
 
@@ -196,7 +196,7 @@ async function handleRaceAnalysisInteraction(interaction) {
   }
   if (interaction.isStringSelectMenu()) {
     const meet = config.MEET_BY_CODE[context.meetCode];
-    const entries = await kraApi.getEntryInfo(meet.apiMeet, context.rcDate, context.rcNo);
+    const entries = await kraApi.getEntryInfo(meet.apiMeet, context.rcDate, context.rcNo, '경주 분석 출전표 선택 확인');
     const selectedIndex = entries.findIndex((entry) => String(entry.hrNo) === String(interaction.values[0]));
     if (selectedIndex === -1) {
       await interaction.reply({ content: '선택한 출전마 정보를 다시 조회하지 못했습니다.', flags: MessageFlags.Ephemeral });

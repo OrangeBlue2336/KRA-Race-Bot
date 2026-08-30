@@ -369,7 +369,7 @@ async function main() {
   }
 
   await warmScheduleCache();
-  setInterval(() => warmScheduleCache().catch(console.error), 4 * 60_000);
+  setInterval(() => warmScheduleCache().catch(console.error), 15 * 60_000);
 
   startKeepAlive({
     port: config.port,

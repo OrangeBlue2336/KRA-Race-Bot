@@ -42,7 +42,7 @@ async function loadSchedule(meet, rcDate = todayKST()) {
 }
 
 async function warmScheduleCache() {
-  await Promise.allSettled(config.MEETS.map(loadSchedule));
+  await Promise.allSettled(config.MEETS.map((meet) => loadSchedule(meet)));
 }
 
 function weekDatesFromToday() {
@@ -161,8 +161,8 @@ async function handleScheduleButton(interaction) {
 function getCommandData() {
   return [
     new SlashCommandBuilder()
-      .setName('경마일정')
-      .setDescription('오늘부터 1주일 동안의 경마 일정을 확인합니다.')
+      .setName('경주일정')
+      .setDescription('오늘부터 1주일 동안의 경주 일정을 확인합니다.')
       .addStringOption((option) => option
         .setName('경마장')
         .setDescription('일정을 확인할 경마장을 선택합니다.')

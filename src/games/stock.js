@@ -50,12 +50,7 @@ function changeText(stock) {
   return `${arrow} ${rate > 0 ? '+' : ''}${rate.toFixed(2)}%`;
 }
 
-// Discord는 코드블록에 ```ansi 언어 태그를 붙이면 ANSI 색상 코드를 해석해 글자색을 입혀준다.
-// 1;32 = 굵은 초록, 1;31 = 굵은 빨강, 0 = 리셋.
-function ansiColor(code, text) {
-  return `\u001b[${code}m${text}\u001b[0m`;
-}
-
+// Discord의 diff 코드블록은 모바일에서도 등락을 구분할 수 있고, ANSI 색상 코드가 필요 없다.
 // 시세 목록을 코드블록 한 줄씩으로 정리한다. (순번 / 종목명 / 화살표+현재가 / 변동폭·변동률)
 function buildStockListLines(stocks) {
   const nameWidth = Math.max(...stocks.map((stock) => stock.name.length)) + 2;
@@ -65,11 +60,11 @@ function buildStockListLines(stocks) {
     const isUp = diff > 0;
     const isDown = diff < 0;
     const arrow = isUp ? '▲' : isDown ? '▼' : '■';
-    const colorCode = isUp ? '1;32' : isDown ? '1;31' : '1;30';
+    const diffPrefix = isUp ? '+' : isDown ? '-' : ' ';
     const diffText = `${diff > 0 ? '+' : ''}${diff.toLocaleString()} (${rate > 0 ? '+' : ''}${rate.toFixed(2)}%)`;
     const priceText = `${arrow} ${stock.price.toLocaleString()}  ${diffText}`;
     const label = `${index + 1}. ${stock.name}`.padEnd(nameWidth + 3, ' ');
-    return `${label}${ansiColor(colorCode, priceText)}`;
+    return `${diffPrefix} ${label}${priceText}`;
   });
 }
 
@@ -86,7 +81,7 @@ function buildStockListEmbed(stocks) {
 
   const description = [
     `📊 주식 정보는 <t:${unixSeconds}:R>에 변동됐습니다. (<t:${unixSeconds}:f>)`,
-    '```ansi',
+    '```diff',
     ...buildStockListLines(stocks),
     '```',
   ].join('\n');

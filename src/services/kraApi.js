@@ -1,5 +1,5 @@
 const { XMLParser } = require('fast-xml-parser');
-const { kraServiceKey } = require('../config');
+const { kraServiceKey, MEETS } = require('../config');
 
 const BASE_URL = 'https://apis.data.go.kr/B551015';
 
@@ -66,7 +66,26 @@ function extractItems(payload) {
   return toArray(body.items?.item);
 }
 
-async function requestKra(path, params = {}) {
+function resultUnit(path) {
+  if (path === ENDPOINTS.totalHorseInfo) return '마리';
+  if (path === ENDPOINTS.entrySheet) return '두';
+  return '건';
+}
+
+function meetLabel(meet) {
+  const found = MEETS.find((item) => item.apiMeet === String(meet));
+  return found ? `${found.name} 경마장 ` : '';
+}
+
+function logKraSuccess(purpose, path, params, items) {
+  console.info(`📡 API 호출 - ${purpose}. ${meetLabel(params.meet)}${items.length}${resultUnit(path)} 조회 성공`);
+}
+
+function logKraError(purpose, error) {
+  console.error(`📡 API 호출 오류 - ${purpose} ${error.message}`);
+}
+
+async function requestKra(path, params = {}, purpose = 'KRA 데이터 조회') {
   const common = {
     pageNo: 1,
     numOfRows: 100,
@@ -86,12 +105,15 @@ async function requestKra(path, params = {}) {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${text.slice(0, 120)}`);
       }
-      return extractItems(parseBody(text, response.headers.get('content-type') || ''));
+      const items = extractItems(parseBody(text, response.headers.get('content-type') || ''));
+      logKraSuccess(purpose, path, attemptParams, items);
+      return items;
     } catch (error) {
       lastError = error;
     }
   }
 
+  logKraError(purpose, lastError);
   throw lastError;
 }
 
@@ -101,131 +123,132 @@ function normalizeNumberFields(item) {
   );
 }
 
-async function getRaceSchedule(meet, rcDate) {
+async function getRaceSchedule(meet, rcDate, purpose = '경마 일정 조회') {
   const items = await requestKra(ENDPOINTS.racePlan, {
     meet,
     rc_date: rcDate,
     numOfRows: 100,
-  });
+  }, purpose);
   return items.map(normalizeNumberFields);
 }
 
-async function getEntryInfo(meet, rcDate, rcNo) {
+async function getEntryInfo(meet, rcDate, rcNo, purpose = '경주 출전표 조회') {
   const items = await requestKra(ENDPOINTS.entrySheet, {
     meet,
     rc_date: rcDate,
     numOfRows: 500,
-  });
+  }, purpose);
   return items
     .map(normalizeNumberFields)
     .filter((item) => Number(item.rcNo) === Number(rcNo))
     .sort((a, b) => Number(a.chulNo) - Number(b.chulNo));
 }
 
-async function getRaceSummaryResult(meet, rcDate, rcNo) {
+async function getRaceSummaryResult(meet, rcDate, rcNo, purpose = '경주 결과 요약 조회') {
   const items = await requestKra(ENDPOINTS.raceSummaryResult, {
     meet,
     rcDate,
     numOfRows: 500,
-  });
+  }, purpose);
   return items
     .map(normalizeNumberFields)
     .find((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo)) || null;
 }
 
-async function getRaceResult(meet, rcDate, rcNo) {
+async function getRaceResult(meet, rcDate, rcNo, purpose = '경주 결과 조회') {
   const items = await requestKra(ENDPOINTS.raceResult, {
     meet,
     rc_date: rcDate,
     rc_no: rcNo,
     numOfRows: 100,
-  });
+  }, purpose);
   return items
     .map(normalizeNumberFields)
     .filter((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo))
     .sort((a, b) => Number(a.ord) - Number(b.ord));
 }
 
-async function getIntegratedOdds(meet, rcDate, rcNo) {
+async function getIntegratedOdds(meet, rcDate, rcNo, purpose = '통합 배당률 조회') {
   const items = await requestKra(ENDPOINTS.integratedInfo, {
     meet,
     rc_date: rcDate,
     rc_no: rcNo,
     numOfRows: 2000,
-  });
+  }, purpose);
   return items
     .map(normalizeNumberFields)
     .filter((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo));
 }
 
-async function getJockeyChanges(meet, rcDate, rcNo) {
+async function getJockeyChanges(meet, rcDate, rcNo, purpose = '기수 변경 조회') {
   const items = await requestKra(ENDPOINTS.jockeyChangeDetail, {
     meet,
     rc_date: rcDate,
     rc_no: rcNo,
     numOfRows: 100,
-  });
+  }, purpose);
   return items
     .map(normalizeNumberFields)
     .filter((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo))
     .sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0));
 }
 
-async function getRaceHorseCancels(meet, rcDate, rcNo) {
+async function getRaceHorseCancels(meet, rcDate, rcNo, purpose = '출전 취소 조회') {
   const items = await requestKra(ENDPOINTS.raceHorseCancelInfo, {
     meet,
     rc_date: rcDate,
     numOfRows: 500,
-  });
+  }, purpose);
   return items
     .map(normalizeNumberFields)
     .filter((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo))
     .sort((a, b) => Number(a.chulNo || 0) - Number(b.chulNo || 0));
 }
 
-async function searchHorseInfoByName(hrName) {
+async function searchHorseInfoByName(hrName, purpose = '말 정보 검색') {
   const items = await requestKra(ENDPOINTS.totalHorseInfo, {
     hr_name: hrName,
-    numOfRows: 25,
-  });
+    // 10건 이상이면 선택을 통한 상세 조회를 막으므로, 그 판단에 필요한 11건만 요청한다.
+    numOfRows: 11,
+  }, purpose);
   return items.map(normalizeNumberFields);
 }
 
-async function getHorseInfoByNo(hrNo) {
+async function getHorseInfoByNo(hrNo, purpose = '말 상세 정보 조회') {
   const items = await requestKra(ENDPOINTS.totalHorseInfo, {
     hr_no: hrNo,
     numOfRows: 10,
-  });
+  }, purpose);
   return items.map(normalizeNumberFields).find((item) => String(item.hrNo) === String(hrNo)) || null;
 }
 
-async function getTrainerInfo(meet, trNo) {
-  const items = await requestKra(ENDPOINTS.trainerInfo, { meet, tr_no: trNo, numOfRows: 10 });
+async function getTrainerInfo(meet, trNo, purpose = '조교사 정보 조회') {
+  const items = await requestKra(ENDPOINTS.trainerInfo, { meet, tr_no: trNo, numOfRows: 10 }, purpose);
   return items.map(normalizeNumberFields).find((item) => String(item.trNo) === String(trNo)) || null;
 }
 
-async function getJockeyResult(meet, jkNo) {
-  const items = await requestKra(ENDPOINTS.jockeyResult, { meet, jk_no: jkNo, numOfRows: 10 });
+async function getJockeyResult(meet, jkNo, purpose = '기수 성적 조회') {
+  const items = await requestKra(ENDPOINTS.jockeyResult, { meet, jk_no: jkNo, numOfRows: 10 }, purpose);
   return items.map(normalizeNumberFields).find((item) => String(item.jkNo) === String(jkNo)) || null;
 }
 
-async function getEntryHorseWeightInfo(meet, rcDate, hrNo) {
+async function getEntryHorseWeightInfo(meet, rcDate, hrNo, purpose = '출전마 체중 조회') {
   const items = await requestKra(ENDPOINTS.entryHorseWeightInfo, {
     meet,
     hr_no: hrNo,
     rc_date: rcDate,
     numOfRows: 100,
-  });
+  }, purpose);
   return items.map(normalizeNumberFields).find((item) => String(item.hrNo) === String(hrNo) && Number(item.rcDate) === Number(rcDate)) || null;
 }
 
-async function getTrackInfo(meet, rcDate, rcNo) {
+async function getTrackInfo(meet, rcDate, rcNo, purpose = '주로 정보 조회') {
   const items = await requestKra(ENDPOINTS.trackInfo, {
     meet,
     rc_date_fr: rcDate,
     rc_date_to: rcDate,
     numOfRows: 100,
-  });
+  }, purpose);
   return items
     .map(normalizeNumberFields)
     .find((item) => Number(item.rcDate) === Number(rcDate) && Number(item.rcNo) === Number(rcNo)) || null;
