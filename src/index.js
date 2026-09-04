@@ -258,7 +258,7 @@ const CHAT_INPUT_COMMAND_HANDLERS = {
   리더보드: handleLeaderboardCommand,
   마권발매: handleTicketCommand,
   내마권: handleMyTicketsCommand,
-  경마일정: handleScheduleCommand,
+  경주일정: handleScheduleCommand,
   경주정보: handleRaceInfoCommand,
   알림구독: handleAlertSubscribeCommand,
   말정보: handleHorseInfoCommand,
