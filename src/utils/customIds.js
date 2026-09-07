@@ -21,6 +21,8 @@ const CUSTOM_IDS = {
   giftCancelPrefix: 'gift:cancel:',
   shoeGameActionPrefix: 'shoegame:',
   stockQuoteSelectPrefix: 'stock:quote:select',
+  moneyBulkConfirmPrefix: 'money:bulk:confirm:',
+  moneyBulkCancelPrefix: 'money:bulk:cancel:',
 };
 
 module.exports = CUSTOM_IDS;

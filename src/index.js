@@ -1,5 +1,8 @@
 const {
+  ActionRowBuilder,
   ActivityType,
+  ButtonBuilder,
+  ButtonStyle,
   Client,
   EmbedBuilder,
   GatewayIntentBits,
@@ -18,6 +21,7 @@ const { startStockPriceWorker } = require('./services/stockPriceService');
 const { nowKST, todayKST } = require('./utils/time');
 const CUSTOM_IDS = require('./utils/customIds');
 const { RESPONSIBLE_GAMBLING_STATUS, isDeveloper, moneyText, displayUsername } = require('./utils/common');
+const { createGameId, createGameSessionStore } = require('./utils/gameSession');
 const { handleGambleCommand, handleGamblePrefixCommand } = require('./games/gamble');
 const { handleBlackjackCommand, handleBlackjackAction } = require('./games/blackjack');
 const { handleShoeGameCommand, handleShoeGameAction } = require('./games/shoeGame');
@@ -233,21 +237,81 @@ async function handleLeaderboardCommand(interaction) {
   await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xf1c40f).setTitle(scope === 'server' ? '📊 서버 머니 리더보드' : '📊 글로벌 머니 리더보드').setDescription(description)] });
 }
 
+// .money add/deduct everyone (머니) 확인 대기열. TTL 5분, 확인/취소 버튼을 누르면 즉시 소모됨.
+const pendingBulkMoneyActions = createGameSessionStore(5 * 60_000);
+
 async function handleDeveloperMoneyCommand(message) {
   if (!isDeveloper(message.author.id)) return;
-  const match = message.content.match(/^\.money\s+(add|deduct)\s+(\d{15,22})\s+(\d+)\s*$/i);
+  const match = message.content.match(/^\.money\s+(add|deduct)\s+(everyone|\d{15,22})\s+(\d+)\s*$/i);
   if (!match) return;
-  const [, operation, discordId, rawAmount] = match;
+  const [, operationRaw, target, rawAmount] = match;
+  const operation = operationRaw.toLowerCase();
   const amount = Number(rawAmount);
   if (!Number.isSafeInteger(amount) || amount <= 0) return;
-  const update = operation.toLowerCase() === 'add'
+
+  if (target.toLowerCase() === 'everyone') {
+    await handleDeveloperMoneyEveryoneCommand(message, operation, amount);
+    return;
+  }
+
+  const discordId = target;
+  const update = operation === 'add'
     ? { $inc: { balance: amount } }
     : { $inc: { balance: -amount } };
-  const filter = operation.toLowerCase() === 'add' ? { discordId } : { discordId, balance: { $gte: amount } };
+  const filter = operation === 'add' ? { discordId } : { discordId, balance: { $gte: amount } };
   const account = await UserMoney.findOneAndUpdate(filter, update, { new: true });
   await message.reply(account
-    ? `${displayUsername(account.username)}님의 잔액을 ${operation.toLowerCase() === 'add' ? '증가' : '차감'}했습니다. 현재 잔액: ${moneyText(account.balance)}`
+    ? `${displayUsername(account.username)}님의 잔액을 ${operation === 'add' ? '증가' : '차감'}했습니다. 현재 잔액: ${moneyText(account.balance)}`
     : '대상 유저가 가입하지 않았거나 차감할 머니가 부족합니다.');
+}
+
+// .money add/deduct everyone (머니): 실행 즉시 지급/차감하지 않고 확인/취소 버튼으로 재확인을 받는다.
+async function handleDeveloperMoneyEveryoneCommand(message, operation, amount) {
+  const bulkId = createGameId();
+  pendingBulkMoneyActions.add({
+    id: bulkId,
+    developerId: message.author.id,
+    operation,
+    amount,
+  });
+  const verb = operation === 'add' ? '지급' : '차감';
+  await message.reply({
+    content: `⚠️ 가입된 **모든 사용자**에게 **${moneyText(amount)}**를 ${verb}할까요?`,
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`${CUSTOM_IDS.moneyBulkConfirmPrefix}${bulkId}`).setLabel('확인').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`${CUSTOM_IDS.moneyBulkCancelPrefix}${bulkId}`).setLabel('취소').setStyle(ButtonStyle.Secondary),
+    )],
+  });
+}
+
+async function handleDeveloperMoneyBulkConfirmation(interaction, confirmed) {
+  if (!isDeveloper(interaction.user.id)) {
+    await interaction.reply({ content: '이 작업은 개발자만 수행할 수 있습니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const prefix = confirmed ? CUSTOM_IDS.moneyBulkConfirmPrefix : CUSTOM_IDS.moneyBulkCancelPrefix;
+  const bulkId = interaction.customId.slice(prefix.length);
+  const pending = pendingBulkMoneyActions.get(bulkId);
+  if (!pending || pending.developerId !== interaction.user.id) {
+    await interaction.reply({ content: '올바르지 않거나 만료된 요청입니다.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  pendingBulkMoneyActions.delete(bulkId);
+
+  if (!confirmed) {
+    await interaction.update({ content: '취소되었습니다.', embeds: [], components: [] });
+    return;
+  }
+
+  const { operation, amount } = pending;
+  const filter = operation === 'add' ? {} : { balance: { $gte: amount } };
+  const update = operation === 'add' ? { $inc: { balance: amount } } : { $inc: { balance: -amount } };
+  const result = await UserMoney.updateMany(filter, update);
+  const verb = operation === 'add' ? '지급' : '차감';
+  await interaction.update({
+    content: `✅ 가입된 사용자 **${result.modifiedCount}명**에게 **${moneyText(amount)}**를 ${verb}했습니다.`,
+    components: [],
+  });
 }
 
 // 슬래시 커맨드 이름 → 핸들러 매핑 테이블. 새 커맨드를 추가하려면 여기에 한 줄만 추가하면 된다.
@@ -289,6 +353,8 @@ const BUTTON_HANDLERS = [
   { prefix: CUSTOM_IDS.alertCancelDismissPrefix, handler: handleAlertCancelButton },
   { prefix: CUSTOM_IDS.giftConfirmPrefix, handler: (interaction) => handleGiftConfirmation(interaction, true) },
   { prefix: CUSTOM_IDS.giftCancelPrefix, handler: (interaction) => handleGiftConfirmation(interaction, false) },
+  { prefix: CUSTOM_IDS.moneyBulkConfirmPrefix, handler: (interaction) => handleDeveloperMoneyBulkConfirmation(interaction, true) },
+  { prefix: CUSTOM_IDS.moneyBulkCancelPrefix, handler: (interaction) => handleDeveloperMoneyBulkConfirmation(interaction, false) },
 ];
 
 const SELECT_MENU_PREFIX_HANDLERS = [
