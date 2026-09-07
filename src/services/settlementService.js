@@ -4,6 +4,7 @@ const UserMoney = require('../models/UserMoney');
 const kraApi = require('./kraApi');
 const { evaluateTicket } = require('../utils/betting');
 const { canCheckRaceResult, formatRaceDate, formatRaceTime } = require('../utils/time');
+const { getPlaceBadge } = require('../utils/common');
 const { MEET_BY_CODE, resultCheckDelayMinutes, resultCheckIntervalMs } = require('../config');
 
 let workerTimer = null;
@@ -13,16 +14,6 @@ function buildVodUrl(meetCode, rcDate, rcNo) {
   const apiMeet = MEET_BY_CODE[meetCode]?.apiMeet;
   if (!apiMeet) return null;
   return `https://kraplayer.starplayer.net/kra/vod/starplayer.php?meet=${apiMeet}&rcdate=${rcDate}&rcno=${rcNo}&vod_type=r`;
-}
-
-const PLACE_BADGES = {
-  1: '🥇',
-  2: '🥈',
-  3: '🥉',
-};
-
-function getPlaceBadge(place) {
-  return PLACE_BADGES[place] || `${place}착`;
 }
 
 function normalizeCombo(numbers, ordered = false) {

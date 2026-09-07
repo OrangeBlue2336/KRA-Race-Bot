@@ -13,14 +13,14 @@ const { moneyText } = require('../utils/common');
 const { createGameId, createCooldownManager, createGameSessionStore } = require('../utils/gameSession');
 
 const SHOE_GAME_ASSET_DIR = 'assets/img/ShoeGame';
-const shoeGames = createGameSessionStore();
-const shoeGameUserIds = new Map();
+// keyField('discordId')를 지정하면 "이 유저가 진행 중인 게임이 있는가"를 shoeGames.getByKey(userId)로
+// 바로 확인할 수 있다 — 별도 Map을 직접 만들지 않는다(AGENTS.md 규칙 5).
+const shoeGames = createGameSessionStore(undefined, 'discordId');
 const shoeGameCooldowns = createCooldownManager();
 
 function finishShoeGame(game) {
   game.status = 'completed';
   shoeGames.delete(game.id);
-  shoeGameUserIds.delete(game.discordId);
   shoeGameCooldowns.set(game.discordId, config.shoeGameCooldownSeconds);
 }
 
@@ -112,7 +112,7 @@ async function handleShoeGameCommand(interaction) {
       flags: MessageFlags.Ephemeral,
     });
   }
-  if (shoeGameUserIds.has(userId)) {
+  if (shoeGames.getByKey(userId)) {
     return interaction.reply({ content: '진행 중인 편자강화 게임이 있습니다. 해당 게임을 끝낸 뒤 다시 시도해주세요.', flags: MessageFlags.Ephemeral });
   }
 
@@ -129,7 +129,6 @@ async function handleShoeGameCommand(interaction) {
 
   const game = { id: createGameId(), discordId: userId, username: interaction.user.username, amount, stage: 0, status: 'active', locked: false };
   shoeGames.add(game);
-  shoeGameUserIds.set(userId, game.id);
   const stage = shoeGameStage(game.stage);
   await interaction.reply({ embeds: [shoeGameEmbed(game, { balance: account.balance })], components: shoeGameButtons(game), files: [shoeGameImageFile(stage)] });
 }

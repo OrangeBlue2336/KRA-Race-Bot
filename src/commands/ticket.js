@@ -18,7 +18,7 @@ const kraApi = require('../services/kraApi');
 const Ticket = require('../models/Ticket');
 const UserMoney = require('../models/UserMoney');
 const CUSTOM_IDS = require('../utils/customIds');
-const { moneyText, isDeveloper } = require('../utils/common');
+const { moneyText, isDeveloper, getPlaceBadge } = require('../utils/common');
 const {
   parseAmount,
   parseHorseInput,
@@ -64,11 +64,6 @@ function ticketStatusText(ticket) {
   if (ticket.status === 'lost') return `실패 / **${Number(ticket.amount || 0).toLocaleString()}머니를 잃었습니다**`;
   if (ticket.status === 'void') return '무효';
   return ticket.status;
-}
-
-function getPlaceBadge(place) {
-  const badges = { 1: '🥇', 2: '🥈', 3: '🥉' };
-  return badges[place] || `${place}착`;
 }
 
 function getStatusEmoji(ticket) {

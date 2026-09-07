@@ -479,16 +479,6 @@ if (require.main === module) {
   });
 }
 
-
 module.exports = {
   getCommandData,
-  handleTicketCommand,
-  handleMyTicketsCommand,
-  handleScheduleCommand,
-  handleRaceInfoCommand,
-  handleAlertSubscribeCommand,
-  handleHorseInfoCommand,
-  handleTicketModal,
-  handleBlackjackCommand,
-  setResponsibleGamblingPresence,
 };

@@ -34,22 +34,36 @@ function createCooldownManager({ autoCleanup = false } = {}) {
   return { getUntil, getRemainingSeconds, set };
 }
 
-function createGameSessionStore(ttlMs) {
+// ttlMs: 세션 자동 만료 시간(ms). 없으면 만료 없음(직접 delete 필요).
+// keyField: 지정하면 session[keyField] 값으로도 조회 가능한 보조 인덱스를 함께 유지한다.
+//   예: createGameSessionStore(undefined, 'discordId')는 "이 유저가 진행 중인 게임이 있는가"를
+//   getByKey(discordId)로 바로 확인할 수 있게 해준다 — 게임 파일에서 별도 Map을 새로 만들지 않아도 됨.
+function createGameSessionStore(ttlMs, keyField) {
   const sessions = new Map();
+  const byKey = keyField ? new Map() : null;
 
   function add(session) {
     sessions.set(session.id, session);
+    if (byKey) byKey.set(session[keyField], session.id);
     if (ttlMs) {
       setTimeout(() => {
-        if (sessions.get(session.id) === session) sessions.delete(session.id);
+        if (sessions.get(session.id) === session) remove(session.id);
       }, ttlMs);
     }
+  }
+
+  function remove(id) {
+    const session = sessions.get(id);
+    const removed = sessions.delete(id);
+    if (byKey && session && byKey.get(session[keyField]) === id) byKey.delete(session[keyField]);
+    return removed;
   }
 
   return {
     add,
     get: (id) => sessions.get(id),
-    delete: (id) => sessions.delete(id),
+    delete: remove,
+    getByKey: byKey ? (key) => sessions.get(byKey.get(key)) : undefined,
   };
 }
 

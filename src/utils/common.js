@@ -14,9 +14,20 @@ function displayUsername(username) {
   return String(username || '알 수 없는 유저').replace(/[\\`*_{}\[\]()<>#+\-.!|]/g, '\\$&');
 }
 
+const PLACE_BADGES = {
+  1: '🥇',
+  2: '🥈',
+  3: '🥉',
+};
+
+function getPlaceBadge(place) {
+  return PLACE_BADGES[place] || `${place}착`;
+}
+
 module.exports = {
   RESPONSIBLE_GAMBLING_STATUS,
   isDeveloper,
   moneyText,
   displayUsername,
+  getPlaceBadge,
 };
