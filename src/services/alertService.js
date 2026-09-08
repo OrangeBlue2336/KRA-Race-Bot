@@ -92,7 +92,7 @@ function buildAlertEmbed(ticket, alertType, item) {
     .setDescription(isJockeyChange ? describeJockeyChange(item) : describeHorseCancel(item))
     .addFields(
       { name: '경주', value: `${ticket.meet} ${ticket.rcNo}경주 (${formatRaceDate(ticket.rcDate)} ${formatRaceTime(ticket.schStTime)})`, inline: false },
-      { name: '내 마권', value: `${ticket.betType} / ${ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`} / ${Number(ticket.amount).toLocaleString()}원`, inline: false },
+      { name: '내 마권', value: `${ticket.betType} / ${ticket.isTest ? 'test' : `${ticket.horses.join(', ')}번`} / ${Number(ticket.amount).toLocaleString()}머니`, inline: false },
     )
     .setTimestamp();
 }
@@ -123,7 +123,7 @@ function buildVoidNoticeEmbed(ticket, cancelItem) {
       },
       {
         name: '무효화된 마권',
-        value: `${ticket.betType} / ${ticket.horses.join(', ')}번 / ${Number(ticket.amount).toLocaleString()}원`,
+        value: `${ticket.betType} / ${ticket.horses.join(', ')}번 / ${Number(ticket.amount).toLocaleString()}머니`,
         inline: false,
       },
       {
