@@ -8,9 +8,11 @@ const {
 const mongoose = require('mongoose');
 const config = require('./config');
 const AlertSubscription = require('./models/AlertSubscription');
+const GameHold = require('./models/GameHold');
 const Ticket = require('./models/Ticket');
 const UserMoney = require('./models/UserMoney');
 const { startAlertWorker } = require('./services/alertService');
+const { refundOrphanedGameHolds } = require('./services/gameHoldService');
 const { startKeepAlive } = require('./services/keepAliveServer');
 const { startSettlementWorker } = require('./services/settlementService');
 const { startStockPriceWorker } = require('./services/stockPriceService');
@@ -245,6 +247,7 @@ async function ensureDatabaseIndexes() {
   await AlertSubscription.createIndexes();
   await Stock.createIndexes();
   await StockHolding.createIndexes();
+  await GameHold.createIndexes();
 }
 
 async function main() {
@@ -271,6 +274,7 @@ async function main() {
   client.once('clientReady', () => {
     console.log(`${client.user.tag} 로그인 완료`);
     setResponsibleGamblingPresence(client);
+    refundOrphanedGameHolds(client).catch((error) => console.error('[gameHold] 시작 시 환불 처리 실패', error));
     startSettlementWorker(client);
     startAlertWorker(client);
     startStockPriceWorker();

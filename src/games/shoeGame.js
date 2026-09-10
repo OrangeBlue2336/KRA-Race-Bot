@@ -11,6 +11,7 @@ const UserMoney = require('../models/UserMoney');
 const CUSTOM_IDS = require('../utils/customIds');
 const { moneyText } = require('../utils/common');
 const { createGameId, createCooldownManager, createGameSessionStore } = require('../utils/gameSession');
+const { recordGameHold, releaseGameHold } = require('../services/gameHoldService');
 
 const SHOE_GAME_ASSET_DIR = 'assets/img/ShoeGame';
 // keyField('discordId')를 지정하면 "이 유저가 진행 중인 게임이 있는가"를 shoeGames.getByKey(userId)로
@@ -18,10 +19,11 @@ const SHOE_GAME_ASSET_DIR = 'assets/img/ShoeGame';
 const shoeGames = createGameSessionStore(undefined, 'discordId');
 const shoeGameCooldowns = createCooldownManager();
 
-function finishShoeGame(game) {
+async function finishShoeGame(game) {
   game.status = 'completed';
   shoeGames.delete(game.id);
   shoeGameCooldowns.set(game.discordId, config.shoeGameCooldownSeconds);
+  await releaseGameHold(game.id);
 }
 
 function shoeGameStage(level) {
@@ -129,6 +131,7 @@ async function handleShoeGameCommand(interaction) {
 
   const game = { id: createGameId(), discordId: userId, username: interaction.user.username, amount, stage: 0, status: 'active', locked: false };
   shoeGames.add(game);
+  await recordGameHold({ gameId: game.id, discordId: userId, username: interaction.user.username, gameType: '편자강화', amount });
   const stage = shoeGameStage(game.stage);
   await interaction.reply({ embeds: [shoeGameEmbed(game, { balance: account.balance })], components: shoeGameButtons(game), files: [shoeGameImageFile(stage)] });
 }
@@ -147,7 +150,7 @@ async function handleShoeGameAction(interaction) {
       const payout = Math.floor(game.amount * stage.multiplier);
       const account = await UserMoney.findOneAndUpdate({ discordId: game.discordId }, { $inc: { balance: payout }, $set: { username: interaction.user.username } }, { new: true });
       if (!account) throw new Error('머니 계정을 찾을 수 없습니다.');
-      finishShoeGame(game);
+      await finishShoeGame(game);
       await interaction.update({ embeds: [shoeGameEmbed(game, { result: 'claimed', balance: account.balance })], components: [], files: [shoeGameImageFile(stage)] });
       return;
     }
@@ -157,7 +160,7 @@ async function handleShoeGameAction(interaction) {
     if (!nextStage) throw new Error('더 이상 강화할 수 없습니다.');
     if (Math.random() >= nextStage.successChance) {
       const stage = shoeGameStage(game.stage);
-      finishShoeGame(game);
+      await finishShoeGame(game);
       const account = await UserMoney.findOne({ discordId: game.discordId }).lean();
       await interaction.update({ embeds: [shoeGameEmbed(game, { result: 'failed', balance: account ? account.balance : null })], components: [], files: [shoeGameImageFile(stage, true)] });
       return;
@@ -169,7 +172,7 @@ async function handleShoeGameAction(interaction) {
       const payout = Math.floor(game.amount * stage.multiplier);
       const account = await UserMoney.findOneAndUpdate({ discordId: game.discordId }, { $inc: { balance: payout }, $set: { username: interaction.user.username } }, { new: true });
       if (!account) throw new Error('머니 계정을 찾을 수 없습니다.');
-      finishShoeGame(game);
+      await finishShoeGame(game);
       await interaction.update({ embeds: [shoeGameEmbed(game, { result: 'max', balance: account.balance })], components: [], files: [shoeGameImageFile(stage)] });
       return;
     }

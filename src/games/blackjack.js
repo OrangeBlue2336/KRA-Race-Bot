@@ -10,11 +10,15 @@ const UserMoney = require('../models/UserMoney');
 const CUSTOM_IDS = require('../utils/customIds');
 const { moneyText } = require('../utils/common');
 const { createGameId, createGameSessionStore } = require('../utils/gameSession');
+const { recordGameHold, increaseGameHold, releaseGameHold } = require('../services/gameHoldService');
 
 const BLACKJACK_SUITS = ['hearts', 'clubs', 'diamonds', 'spades'];
 const BLACKJACK_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const BLACKJACK_GAME_TTL_MS = 15 * 60_000;
-const blackjackGames = createGameSessionStore(BLACKJACK_GAME_TTL_MS);
+// TTL로 게임이 자동 만료(= 유저가 방치)될 때도 보관 기록을 지운다. 방치된 베팅액은 기존과
+// 동일하게 환불되지 않고 사라지는 게 원래 동작이며, 여기서 지우지 않으면 다음 봇 재시작 때
+// "비정상 종료"로 오인되어 잘못 환불될 수 있다.
+const blackjackGames = createGameSessionStore(BLACKJACK_GAME_TTL_MS, undefined, (game) => releaseGameHold(game.id));
 
 function blackjackDeck() {
   const deck = BLACKJACK_SUITS.flatMap((suit) => BLACKJACK_RANKS.map((rank) => ({ suit, rank })));
@@ -196,12 +200,18 @@ async function handleBlackjackCommand(interaction) {
     status: 'active',
     locked: false,
   };
+  // 봇 재시작 시 복구할 수 있도록, 베팅액을 차감한 직후 보관 기록을 남긴다.
+  await recordGameHold({ gameId: game.id, discordId: game.discordId, username: game.username, gameType: '블랙잭', amount });
   game.hands[0].cards.push(blackjackDraw(game));
   game.dealerCards.push(blackjackDraw(game));
   game.hands[0].cards.push(blackjackDraw(game));
   game.dealerCards.push(blackjackDraw(game));
   const completed = await blackjackSettleInitialNaturals(game);
-  if (!completed) blackjackGames.add(game);
+  if (completed) {
+    await releaseGameHold(game.id);
+  } else {
+    blackjackGames.add(game);
+  }
   await interaction.reply({ embeds: [blackjackEmbed(game, { revealDealer: completed, completedHandIndex: completed ? 0 : null })], components: completed ? [] : blackjackButtons(game) });
 }
 
@@ -225,6 +235,7 @@ async function handleBlackjackAction(interaction) {
       if (hand.cards.length !== 2 || hand.doubled) throw new Error('더블 다운은 처음 받은 두 장의 카드에서만 가능합니다.');
       const account = await UserMoney.findOneAndUpdate({ discordId: game.discordId, balance: { $gte: hand.bet } }, { $inc: { balance: -hand.bet }, $set: { username: interaction.user.username } }, { new: true });
       if (!account) throw new Error('더블 다운에 필요한 머니가 부족합니다.');
+      await increaseGameHold(game.id, hand.bet);
       hand.bet *= 2;
       hand.doubled = true;
       hand.cards.push(blackjackDraw(game));
@@ -236,6 +247,7 @@ async function handleBlackjackAction(interaction) {
       }
       const account = await UserMoney.findOneAndUpdate({ discordId: game.discordId, balance: { $gte: hand.bet } }, { $inc: { balance: -hand.bet }, $set: { username: interaction.user.username } }, { new: true });
       if (!account) throw new Error('스플릿에 필요한 머니가 부족합니다.');
+      await increaseGameHold(game.id, hand.bet);
       const secondHand = { cards: [hand.cards.pop()], bet: hand.bet, doubled: false, stood: false };
       hand.cards.push(blackjackDraw(game));
       secondHand.cards.push(blackjackDraw(game));
@@ -254,6 +266,7 @@ async function handleBlackjackAction(interaction) {
       return;
     }
     blackjackGames.delete(game.id);
+    await releaseGameHold(game.id);
     const finalEmbeds = game.hands.map((_, index) => blackjackEmbed(game, { revealDealer: true, completedHandIndex: index }));
     await interaction.update({ embeds: [finalEmbeds[0]], components: [] });
     for (const embed of finalEmbeds.slice(1)) await interaction.followUp({ embeds: [embed] });

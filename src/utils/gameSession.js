@@ -38,7 +38,10 @@ function createCooldownManager({ autoCleanup = false } = {}) {
 // keyField: 지정하면 session[keyField] 값으로도 조회 가능한 보조 인덱스를 함께 유지한다.
 //   예: createGameSessionStore(undefined, 'discordId')는 "이 유저가 진행 중인 게임이 있는가"를
 //   getByKey(discordId)로 바로 확인할 수 있게 해준다 — 게임 파일에서 별도 Map을 새로 만들지 않아도 됨.
-function createGameSessionStore(ttlMs, keyField) {
+// onExpire: ttlMs로 세션이 자동 만료될 때 호출되는 콜백(비동기 가능). 예를 들어 베팅액을
+//   gameHoldService로 보관 중이었다면, TTL 만료(=유저의 게임 방치)도 "게임 종료"이므로
+//   여기서 releaseGameHold(session.id)를 호출해 다음 봇 재시작 때 잘못 환불되지 않게 한다.
+function createGameSessionStore(ttlMs, keyField, onExpire) {
   const sessions = new Map();
   const byKey = keyField ? new Map() : null;
 
@@ -47,7 +50,12 @@ function createGameSessionStore(ttlMs, keyField) {
     if (byKey) byKey.set(session[keyField], session.id);
     if (ttlMs) {
       setTimeout(() => {
-        if (sessions.get(session.id) === session) remove(session.id);
+        if (sessions.get(session.id) === session) {
+          remove(session.id);
+          if (onExpire) {
+            Promise.resolve(onExpire(session)).catch((error) => console.error('[gameSession] onExpire 처리 실패', error));
+          }
+        }
       }, ttlMs);
     }
   }
